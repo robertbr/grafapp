@@ -3,128 +3,560 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PASCO AirLink – Web Bluetooth</title>
+<title>Motion Matcher – Web Bluetooth</title>
 <style>
-  body { font-family: system-ui, sans-serif; max-width: 700px; margin: 2rem auto; padding: 0 1rem; background:#0f172a; color:#e2e8f0; }
-  h1 { font-size: 1.3rem; }
-  button { font-size: 1rem; padding: 0.6rem 1.2rem; margin: 0.3rem 0.3rem 0.3rem 0; border-radius: 8px; border: none; cursor: pointer; }
-  #connectBtn { background:#22c55e; color:#052e16; font-weight:600; }
-  #disconnectBtn { background:#ef4444; color:#450a0a; font-weight:600; }
-  button:disabled { opacity: 0.4; cursor: not-allowed; }
-  #status { padding: 0.6rem; border-radius: 8px; background:#1e293b; margin: 0.8rem 0; }
-  #reading { font-size: 3rem; font-weight: 700; margin: 1rem 0; }
-  #reading span { font-size: 1.2rem; color:#94a3b8; }
-  #log { background:#000; color:#4ade80; font-family: monospace; font-size: 0.75rem; height: 220px; overflow-y: auto; padding: 0.6rem; border-radius: 8px; white-space: pre-wrap; }
-  .row { display:flex; gap: 1rem; flex-wrap: wrap; }
-  .card { background:#1e293b; padding: 1rem; border-radius: 10px; margin: 0.6rem 0; }
-  label { display:block; font-size:0.85rem; color:#94a3b8; margin-top:0.5rem;}
-  input { width: 100%; padding: 0.4rem; border-radius:6px; border:1px solid #334155; background:#0f172a; color:#e2e8f0; }
+  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+  body { 
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
+    background: #000; 
+    color: #fff; 
+    height: 100vh; 
+    display: flex; 
+    flex-direction: column; 
+    overflow: hidden; 
+  }
+  
+  /* Header Toolbar */
+  .toolbar { 
+    background: #0066b2; 
+    height: 48px; 
+    display: flex; 
+    align-items: center; 
+    padding: 0 8px; 
+    gap: 8px; 
+    border-bottom: 2px solid #004d88; 
+    flex-shrink: 0; 
+  }
+
+  .tb-btn { 
+    background: #005291; 
+    border: 1px solid #3385c6; 
+    color: #fff; 
+    padding: 5px 12px; 
+    font-weight: bold; 
+    font-size: 0.85rem; 
+    border-radius: 4px; 
+    cursor: pointer; 
+    display: flex; 
+    align-items: center; 
+    justify-content: center; 
+    height: 36px; 
+  }
+  .tb-btn:active { background: #003d6b; }
+  
+  /* Record Button (Red circle) */
+  .rec-btn { 
+    width: 36px; 
+    height: 36px; 
+    border-radius: 50%; 
+    background: #111; 
+    border: 2px solid #888; 
+    display: flex; 
+    align-items: center; 
+    justify-content: center; 
+    cursor: pointer; 
+  }
+  .rec-btn-inner { 
+    width: 16px; 
+    height: 16px; 
+    border-radius: 50%; 
+    background: #666; 
+    transition: background 0.2s, box-shadow 0.2s; 
+  }
+  .rec-btn.recording .rec-btn-inner { 
+    background: #ef4444; 
+    box-shadow: 0 0 10px #ef4444; 
+  }
+
+  /* Connect Sensor Button */
+  .sensor-btn { 
+    background: #005291; 
+    border: 1px solid #3385c6; 
+    border-radius: 6px; 
+    padding: 2px 8px; 
+    cursor: pointer; 
+    display: flex; 
+    align-items: center; 
+    gap: 4px; 
+    height: 36px; 
+    position: relative; 
+  }
+  .sensor-icon { width: 22px; height: 22px; fill: #fff; }
+  .warning-badge { 
+    position: absolute; 
+    top: 2px; 
+    right: 2px; 
+    color: #facc15; 
+    font-weight: bold; 
+    font-size: 11px; 
+    text-shadow: 0 0 2px #000; 
+  }
+  .sensor-btn.connected .warning-badge { display: none; }
+  .sensor-btn.connected { border-color: #22c55e; background: #006837; }
+
+  /* Dropdown Selectors */
+  select.tb-select { 
+    background: #005291; 
+    color: white; 
+    border: 1px solid #3385c6; 
+    height: 36px; 
+    border-radius: 4px; 
+    padding: 0 8px; 
+    font-weight: bold; 
+    font-size: 0.85rem; 
+    cursor: pointer; 
+  }
+
+  /* Graph Container */
+  .graph-container { 
+    flex: 1; 
+    position: relative; 
+    background: #fff; 
+    width: 100%; 
+    height: 100%; 
+    overflow: hidden; 
+  }
+  canvas { display: block; width: 100%; height: 100%; }
+
+  /* Countdown Overlay */
+  #countdownOverlay { 
+    position: absolute; 
+    top: 50%; 
+    left: 50%; 
+    transform: translate(-50%, -50%); 
+    font-size: 5rem; 
+    font-weight: 900; 
+    color: #ef4444; 
+    text-shadow: 0 0 12px rgba(0,0,0,0.4); 
+    pointer-events: none; 
+    display: none; 
+    z-index: 10; 
+  }
+
+  /* Bottom Display Bar */
+  .bottom-bar { 
+    height: 46px; 
+    background: #2563eb; 
+    display: flex; 
+    align-items: stretch; 
+    border-top: 2px solid #1d4ed8; 
+    flex-shrink: 0; 
+  }
+  .bb-box { 
+    flex: 1; 
+    display: flex; 
+    flex-direction: column; 
+    justify-content: center; 
+    padding: 0 12px; 
+    color: #fff; 
+    font-weight: bold; 
+  }
+  .bb-title { font-size: 0.75rem; opacity: 0.9; text-transform: uppercase; letter-spacing: 0.5px; }
+  .bb-val { font-size: 1.1rem; text-align: right; font-family: monospace; }
+  .bb-center { 
+    flex: 1.5; 
+    background: #fff; 
+    color: #005291; 
+    display: flex; 
+    align-items: center; 
+    justify-content: center; 
+    font-style: italic; 
+    font-weight: 900; 
+    font-size: 1.4rem; 
+    letter-spacing: 1px; 
+  }
 </style>
 </head>
 <body>
 
-<h1>PASCO AirLink (PS-3200) + PASPort Motion Sensor – testverktyg</h1>
+<div class="toolbar">
+  <!-- Level selection -->
+  <select id="levelSelect" class="tb-select">
+    <option value="1">UNWN 1</option>
+    <option value="2">UNWN 2</option>
+    <option value="3">UNWN 3</option>
+    <option value="4">UNWN 4</option>
+    <option value="5">UNWN 5</option>
+    <option value="6">UNWN 6</option>
+  </select>
 
-<div id="status">Inte ansluten.</div>
-
-<button id="connectBtn">Anslut till AirLink</button>
-<button id="disconnectBtn" disabled>Koppla från</button>
-
-<div class="card">
-  <div id="reading">– <span>rått värde</span></div>
-  <div id="calcReading" style="color:#94a3b8;">Kalibrerat värde: –</div>
-</div>
-
-<div class="card">
-  <strong>Kalibrering</strong> (valfritt – behövs för att räkna om till meter)
-  <div class="row">
-    <div style="flex:1">
-      <label>Rått värde vid känt avstånd A</label>
-      <input id="rawA" type="number" placeholder="t.ex. 730">
-      <label>Känt avstånd A (m)</label>
-      <input id="distA" type="number" placeholder="t.ex. 0.20">
-    </div>
-    <div style="flex:1">
-      <label>Rått värde vid känt avstånd B</label>
-      <input id="rawB" type="number" placeholder="t.ex. 2576">
-      <label>Känt avstånd B (m)</label>
-      <input id="distB" type="number" placeholder="t.ex. 0.90">
-    </div>
+  <!-- Start/Stop Recording Button -->
+  <div id="recBtn" class="rec-btn" title="Starta / Stoppa Mätning">
+    <div class="rec-btn-inner"></div>
   </div>
-  <button id="calibrateBtn" style="background:#3b82f6; color:#0b1220; margin-top:0.5rem;">Använd kalibrering</button>
+
+  <!-- Mode Toggle (POSITION / VELOCITY) -->
+  <button id="modeBtn" class="tb-btn">POSITION</button>
+
+  <!-- Graph Curve Preset Switcher -->
+  <button id="curvePresetBtn" class="tb-btn" title="Nästa Målkurva">📈</button>
+
+  <div style="flex:1"></div>
+
+  <!-- Bluetooth Connect Button -->
+  <button id="connectBtn" class="sensor-btn" title="Anslut Sensor">
+    <svg class="sensor-icon" viewBox="0 0 24 24">
+      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z"/>
+    </svg>
+    <span class="warning-badge" id="warnBadge">⚠️</span>
+  </button>
 </div>
 
-<h3>Rå logg (senaste notiserna)</h3>
-<div id="log"></div>
+<!-- Graph Container -->
+<div class="graph-container" id="graphContainer">
+  <canvas id="graphCanvas"></canvas>
+  <div id="countdownOverlay">-3.5</div>
+</div>
+
+<!-- Bottom Status Display -->
+<div class="bottom-bar">
+  <div class="bb-box">
+    <div class="bb-title" id="valLabel">POSITION (M)</div>
+    <div class="bb-val" id="valDisplay">-.-- M</div>
+  </div>
+  <div class="bb-center">
+    MOTION MATCH
+  </div>
+  <div class="bb-box">
+    <div class="bb-title">SCORE</div>
+    <div class="bb-val" id="scoreDisplay">-.--</div>
+  </div>
+</div>
 
 <script>
-// ---- UUID:er extraherade ur riktig bluetooth-logg (btsnoop) ----
+// ---- Bluetooth UUIDs (Exact PASCO AirLink Protocol) ----
 const SERVICE_1        = '4a5c0000-0000-0000-0000-5c1e741f1c00';
-const CMD1_CHAR        = '4a5c0000-0002-0000-0000-5c1e741f1c00'; // handle 0x0020, write utan svar
-const STATUS1_CHAR     = '4a5c0000-0003-0000-0000-5c1e741f1c00'; // handle 0x0022, notify
+const CMD1_CHAR        = '4a5c0000-0002-0000-0000-5c1e741f1c00'; // handle 0x0020
+const STATUS1_CHAR     = '4a5c0000-0003-0000-0000-5c1e741f1c00'; // handle 0x0022
 
 const SERVICE_2        = '4a5c0001-0000-0000-0000-5c1e741f1c00';
-const CMD2_CHAR        = '4a5c0001-0002-0000-0000-5c1e741f1c00'; // handle 0x0026, write utan svar
-const STATUS2_CHAR     = '4a5c0001-0003-0000-0000-5c1e741f1c00'; // handle 0x0028, notify
-const MEASURE_CHAR     = '4a5c0001-0004-0000-0000-5c1e741f1c00'; // handle 0x002b, notify (mätström)
-const CMD3_CHAR        = '4a5c0001-0005-0000-0000-5c1e741f1c00'; // handle 0x002e, write utan svar (keep-alive)
+const CMD2_CHAR        = '4a5c0001-0002-0000-0000-5c1e741f1c00'; // handle 0x0026
+const STATUS2_CHAR     = '4a5c0001-0003-0000-0000-5c1e741f1c00'; // handle 0x0028
+const MEASURE_CHAR     = '4a5c0001-0004-0000-0000-5c1e741f1c00'; // handle 0x002b
+const CMD3_CHAR        = '4a5c0001-0005-0000-0000-5c1e741f1c00'; // handle 0x002e
 
-let device, server, cmd1, status1, cmd2, status2, measure, cmd3;
+// Calibration: 5500 raw = 1.0 m, 0 raw = 0.0 m
+const RAW_SCALE = 1.0 / 5500.0;
+const PRE_START_TIME = 3.5; // 3.5 seconds countdown before 0.0s
+
+let device = null, server = null;
+let cmd1 = null, status1 = null, cmd2 = null, status2 = null, measure = null, cmd3 = null;
 let keepAliveTimer = null;
-let calib = null; // {scale, offset} om användaren kalibrerat
 
-const logEl = document.getElementById('log');
-const statusEl = document.getElementById('status');
-const readingEl = document.getElementById('reading');
-const calcEl = document.getElementById('calcReading');
+// Application State
+let currentMode = 'POSITION'; // 'POSITION' or 'VELOCITY'
+let currentLevel = 1;
+let isMeasuring = false;
+let startTime = 0;
+let latestValue = 0;
+let userPoints = []; // Array of { t: seconds, v: distance/velocity }
+let animationFrameId = null;
 
-function log(msg) {
-  const t = new Date().toLocaleTimeString();
-  logEl.textContent += `[${t}] ${msg}\n`;
-  logEl.scrollTop = logEl.scrollHeight;
+// DOM Elements
+const levelSelect = document.getElementById('levelSelect');
+const recBtn = document.getElementById('recBtn');
+const modeBtn = document.getElementById('modeBtn');
+const curvePresetBtn = document.getElementById('curvePresetBtn');
+const connectBtn = document.getElementById('connectBtn');
+const canvas = document.getElementById('graphCanvas');
+const ctx = canvas.getContext('2d');
+const countdownOverlay = document.getElementById('countdownOverlay');
+const valLabel = document.getElementById('valLabel');
+const valDisplay = document.getElementById('valDisplay');
+const scoreDisplay = document.getElementById('scoreDisplay');
+
+function getTargetValue(level, mode, t) {
+  t = Math.max(0, Math.min(10, t));
+  if (mode === 'POSITION') {
+    switch (parseInt(level)) {
+      case 1: // Straight line up: 0.4m -> 1.8m
+        return 0.4 + 0.14 * t;
+      case 2: // Straight line down: 1.8m -> 0.4m
+        return 1.8 - 0.14 * t;
+      case 3: // Horizontal line: 1.2m
+        return 1.2;
+      case 4: // Curve up: 0.4m -> 1.9m
+        return 0.4 + 0.015 * t * t;
+      case 5: // Step curve: 0-3s at 0.2m, 3-7s rise to 1.8m, 7-10s at 1.8m
+        if (t < 3) return 0.2;
+        if (t < 7) return 0.2 + (t - 3) * (1.6 / 4);
+        return 1.8;
+      case 6: // Two slopes: 0-6s rise to 0.8m, 6-10s rise to 1.9m
+      default:
+        if (t < 6) return 0.2 + t * (0.6 / 6);
+        return 0.8 + (t - 6) * (1.1 / 4);
+    }
+  } else { // VELOCITY
+    switch (parseInt(level)) {
+      case 1: // Slope down: 0.4 m/s -> -0.4 m/s
+        return 0.4 - 0.08 * t;
+      case 2: // Constant positive velocity: 0.15 m/s
+        return 0.15;
+      case 3: // Constant negative velocity: -0.15 m/s
+        return -0.15;
+      case 4: // Linear decrease: 0.5 -> -0.5 m/s
+        return 0.5 - 0.10 * t;
+      case 5: // Step velocity: +0.3 m/s then -0.3 m/s
+        return t < 5 ? 0.3 : -0.3;
+      case 6: // Wave curve
+      default:
+        return 0.3 * Math.cos((t * Math.PI) / 5);
+    }
+  }
 }
 
-function toHex(dataView) {
-  let s = '';
-  for (let i = 0; i < dataView.byteLength; i++) {
-    s += dataView.getUint8(i).toString(16).padStart(2, '0');
+function updateScore() {
+  const validPoints = userPoints.filter(p => p.t >= 0 && p.t <= 10);
+  if (validPoints.length < 2) {
+    scoreDisplay.textContent = '-.--';
+    return;
   }
-  return s;
+
+  let sumSqErr = 0;
+  let sumSqTot = 0;
+  let sumTarget = 0;
+
+  validPoints.forEach(p => {
+    const target = getTargetValue(currentLevel, currentMode, p.t);
+    sumTarget += target;
+  });
+  const meanTarget = sumTarget / validPoints.length;
+
+  validPoints.forEach(p => {
+    const target = getTargetValue(currentLevel, currentMode, p.t);
+    const err = p.v - target;
+    sumSqErr += err * err;
+    const diff = target - meanTarget;
+    sumSqTot += diff * diff;
+  });
+
+  let r2 = 0;
+  if (sumSqTot < 0.001) {
+    // For horizontal lines where target variance is ~0
+    const mse = sumSqErr / validPoints.length;
+    r2 = Math.max(0, 1 - mse / 0.04);
+  } else {
+    r2 = 1 - (sumSqErr / sumSqTot);
+  }
+
+  const score = Math.max(0, r2 * 100);
+  scoreDisplay.textContent = score.toFixed(2);
+}
+
+function drawGraph() {
+  const width = canvas.width;
+  const height = canvas.height;
+  ctx.clearRect(0, 0, width, height);
+
+  // Margins
+  const marginLeft = 60;
+  const marginRight = 20;
+  const marginTop = 20;
+  const marginBottom = 40;
+
+  const graphW = width - marginLeft - marginRight;
+  const graphH = height - marginTop - marginBottom;
+
+  // X-Range (-3s to 10s)
+  const minX = -3;
+  const maxX = 10;
+
+  // Y-Range
+  let minY = 0.0, maxY = 2.0;
+  if (currentMode === 'VELOCITY') {
+    minY = -0.8;
+    maxY = 0.8;
+  }
+
+  function getCanvasX(t) {
+    return marginLeft + ((t - minX) / (maxX - minX)) * graphW;
+  }
+  function getCanvasY(v) {
+    return marginTop + graphH - ((v - minY) / (maxY - minY)) * graphH;
+  }
+
+  // Draw Grid Lines & Ticks
+  ctx.strokeStyle = '#e2e8f0';
+  ctx.lineWidth = 1;
+  ctx.fillStyle = '#1e293b';
+  ctx.font = '12px system-ui, sans-serif';
+
+  // Vertical Grid (Time: -3 to 10)
+  for (let t = minX; t <= maxX; t++) {
+    const x = getCanvasX(t);
+    ctx.beginPath();
+    ctx.moveTo(x, marginTop);
+    ctx.lineTo(x, marginTop + graphH);
+    ctx.stroke();
+
+    ctx.textAlign = 'center';
+    ctx.fillText(t.toString(), x, marginTop + graphH + 18);
+  }
+
+  // Horizontal Grid (Values)
+  const yTicks = currentMode === 'POSITION' ? [0.0, 0.4, 0.8, 1.2, 1.6, 2.0] : [-0.8, -0.4, 0.0, 0.4, 0.8];
+  yTicks.forEach(val => {
+    const y = getCanvasY(val);
+    ctx.beginPath();
+    ctx.moveTo(marginLeft, y);
+    ctx.lineTo(marginLeft + graphW, y);
+    ctx.stroke();
+
+    ctx.textAlign = 'right';
+    ctx.fillText(val.toFixed(1), marginLeft - 8, y + 4);
+  });
+
+  // t = 0 Line (Thicker Vertical)
+  const xZero = getCanvasX(0);
+  ctx.strokeStyle = '#334155';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(xZero, marginTop);
+  ctx.lineTo(xZero, marginTop + graphH);
+  ctx.stroke();
+
+  // Axis Labels
+  ctx.fillStyle = '#0f172a';
+  ctx.font = 'bold 12px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('TIME (s)', marginLeft + graphW / 2, height - 6);
+
+  ctx.save();
+  ctx.translate(16, marginTop + graphH / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.fillText(currentMode === 'POSITION' ? 'POSITION (m)' : 'VELOCITY (m/s)', 0, 0);
+  ctx.restore();
+
+  // Draw Target Curve (Solid Black Line)
+  ctx.strokeStyle = '#000000';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  let first = true;
+  for (let t = 0; t <= 10; t += 0.05) {
+    const val = getTargetValue(currentLevel, currentMode, t);
+    const cx = getCanvasX(t);
+    const cy = getCanvasY(val);
+    if (first) { ctx.moveTo(cx, cy); first = false; }
+    else { ctx.lineTo(cx, cy); }
+  }
+  ctx.stroke();
+
+  // Draw User Recorded Line (Solid Red Line)
+  if (userPoints.length > 0) {
+    ctx.strokeStyle = '#ef4444';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    let uFirst = true;
+    userPoints.forEach(p => {
+      if (p.t >= minX && p.t <= maxX) {
+        const cx = getCanvasX(p.t);
+        const cy = getCanvasY(p.v);
+        if (uFirst) { ctx.moveTo(cx, cy); uFirst = false; }
+        else { ctx.lineTo(cx, cy); }
+      }
+    });
+    ctx.stroke();
+  }
+
+  // Animation Loop for Recording & Timer
+  if (isMeasuring) {
+    const elapsed = (performance.now() - startTime) / 1000.0;
+    const remainingCD = PRE_START_TIME - elapsed;
+
+    if (remainingCD > 0) {
+      countdownOverlay.style.display = 'block';
+      countdownOverlay.textContent = `-${remainingCD.toFixed(1)}`;
+    } else {
+      countdownOverlay.style.display = 'none';
+      const curT = elapsed - PRE_START_TIME;
+      if (curT >= 10.0) {
+        stopRecording();
+      }
+    }
+  } else {
+    countdownOverlay.style.display = 'none';
+  }
+
+  animationFrameId = requestAnimationFrame(drawGraph);
+}
+
+function resizeCanvas() {
+  const container = document.getElementById('graphContainer');
+  canvas.width = container.clientWidth;
+  canvas.height = container.clientHeight;
+}
+window.addEventListener('resize', resizeCanvas);
+
+// Mode Toggle Button
+modeBtn.addEventListener('click', () => {
+  currentMode = currentMode === 'POSITION' ? 'VELOCITY' : 'POSITION';
+  modeBtn.textContent = currentMode;
+  valLabel.textContent = currentMode === 'POSITION' ? 'POSITION (M)' : 'VELOCITY (M/S)';
+  valDisplay.textContent = currentMode === 'POSITION' ? `${latestValue.toFixed(2)} M` : `${latestValue.toFixed(2)} M/S`;
+  userPoints = [];
+  scoreDisplay.textContent = '-.--';
+});
+
+// Level Switcher
+levelSelect.addEventListener('change', (e) => {
+  currentLevel = parseInt(e.target.value);
+  userPoints = [];
+  scoreDisplay.textContent = '-.--';
+});
+
+curvePresetBtn.addEventListener('click', () => {
+  currentLevel = (currentLevel % 6) + 1;
+  levelSelect.value = currentLevel.toString();
+  userPoints = [];
+  scoreDisplay.textContent = '-.--';
+});
+
+// Recording Trigger
+recBtn.addEventListener('click', () => {
+  if (!isMeasuring) {
+    startRecording();
+  } else {
+    stopRecording();
+  }
+});
+
+function startRecording() {
+  isMeasuring = true;
+  userPoints = [];
+  startTime = performance.now();
+  recBtn.classList.add('recording');
+  scoreDisplay.textContent = '-.--';
+}
+
+function stopRecording() {
+  isMeasuring = false;
+  recBtn.classList.remove('recording');
+  countdownOverlay.style.display = 'none';
+  updateScore();
 }
 
 async function writeBytes(characteristic, bytes) {
   await characteristic.writeValueWithoutResponse(new Uint8Array(bytes));
-  await new Promise(r => setTimeout(r, 60)); // liten paus mellan kommandon
+  await new Promise(r => setTimeout(r, 60));
 }
 
-document.getElementById('connectBtn').addEventListener('click', connect);
-document.getElementById('disconnectBtn').addEventListener('click', disconnect);
-document.getElementById('calibrateBtn').addEventListener('click', () => {
-  const rawA = parseFloat(document.getElementById('rawA').value);
-  const distA = parseFloat(document.getElementById('distA').value);
-  const rawB = parseFloat(document.getElementById('rawB').value);
-  const distB = parseFloat(document.getElementById('distB').value);
-  if ([rawA, distA, rawB, distB].some(isNaN) || rawA === rawB) {
-    alert('Fyll i alla fyra fält med giltiga, olika råa värden.');
+connectBtn.addEventListener('click', async () => {
+  if (device && device.gatt.connected) {
+    device.gatt.disconnect();
     return;
   }
-  const scale = (distB - distA) / (rawB - rawA);
-  const offset = distA - scale * rawA;
-  calib = { scale, offset };
-  log(`Kalibrering satt: avstånd = raw * ${scale.toFixed(6)} + ${offset.toFixed(4)}`);
-});
 
-async function connect() {
   try {
-    statusEl.textContent = 'Söker enhet...';
     device = await navigator.bluetooth.requestDevice({
-      acceptAllDevices: true, // visar alla BLE-enheter i listan, välj din AirLink manuellt
+      acceptAllDevices: true,
       optionalServices: [SERVICE_1, SERVICE_2, 'device_information']
     });
 
-    device.addEventListener('gattserverdisconnected', onDisconnected);
+    device.addEventListener('gattserverdisconnected', () => {
+      connectBtn.classList.remove('connected');
+      if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null; }
+    });
 
-    statusEl.textContent = `Ansluter till ${device.name || device.id}...`;
     server = await device.gatt.connect();
 
     const svc1 = await server.getPrimaryService(SERVICE_1);
@@ -137,24 +569,12 @@ async function connect() {
     measure = await svc2.getCharacteristic(MEASURE_CHAR);
     cmd3    = await svc2.getCharacteristic(CMD3_CHAR);
 
-    // Aktivera notiser
     await status1.startNotifications();
-    status1.addEventListener('characteristicvaluechanged', e => {
-      log(`0x0022 <- ${toHex(e.target.value)}`);
-    });
-
     await status2.startNotifications();
-    status2.addEventListener('characteristicvaluechanged', e => {
-      log(`0x0028 <- ${toHex(e.target.value)}`);
-    });
-
     await measure.startNotifications();
     measure.addEventListener('characteristicvaluechanged', onMeasurement);
 
-    statusEl.textContent = `Ansluten till ${device.name || device.id}. Kör init-sekvens...`;
-    log('Notiser aktiverade. Kör handskakning...');
-
-    // ---- Init/handskakningssekvens, exakt som observerat i btsnoop-loggen ----
+    // Initial Handshake Sequence
     await writeBytes(cmd1, [0x27]);
     await writeBytes(cmd1, [0x18]);
     await writeBytes(cmd1, [0x04, 0x00]);
@@ -168,16 +588,12 @@ async function connect() {
     await writeBytes(cmd1, [0x25, 0x14, 0x01]);
     await writeBytes(cmd2, [0x08]);
 
-    // ---- Det här är "starta mätning"-kommandot ----
+    // Start Measurement Stream Command
     await writeBytes(cmd1, [0x30, 0xc8, 0x18, 0x79, 0x00, 0x00, 0x00, 0x00, 0x00]);
 
-    log('Startkommando skickat – väntar på mätdata på 0x002b...');
-    statusEl.textContent = `Mäter från ${device.name || device.id}`;
+    connectBtn.classList.add('connected');
 
-    document.getElementById('connectBtn').disabled = true;
-    document.getElementById('disconnectBtn').disabled = false;
-
-    // Periodisk keep-alive-cykel (som observerades i loggen, ca var 400:e ms)
+    // Keep-Alive Cycle (400ms)
     let cycle = [0x07, 0x0f, 0x17, 0x1f];
     let cycleIdx = 0;
     keepAliveTimer = setInterval(async () => {
@@ -190,51 +606,43 @@ async function connect() {
         await cmd3.writeValueWithoutResponse(new Uint8Array([0x00, 0x00, 0x00, 0x00, cycle[cycleIdx]]));
         cycleIdx = (cycleIdx + 1) % cycle.length;
       } catch (err) {
-        // enheten kan ha kopplat från - ignorera enstaka fel här
+        // Suppress single drop errors
       }
     }, 400);
 
   } catch (err) {
-    console.error(err);
-    statusEl.textContent = 'Fel: ' + err.message;
-    log('FEL: ' + err.message);
+    console.error("Bluetooth connection failed:", err);
   }
-}
+});
 
 function onMeasurement(event) {
   const dv = event.target.value;
-  const hex = toHex(dv);
-  log(`0x002b <- ${hex}`);
   if (dv.byteLength >= 3) {
-    const raw = dv.getUint16(1, true); // little-endian, byte 1-2 (byte 0 är en löpande räknare)
-    readingEl.innerHTML = `${raw} <span>rått värde</span>`;
-    if (calib) {
-      const dist = raw * calib.scale + calib.offset;
-      calcEl.textContent = `Kalibrerat värde: ${dist.toFixed(3)} m`;
+    const raw = dv.getUint16(1, true); // Little-endian raw reading
+    const currentDist = raw * RAW_SCALE; // 5500 raw = 1 m
+    latestValue = currentDist;
+
+    if (currentMode === 'POSITION') {
+      valDisplay.textContent = `${currentDist.toFixed(2)} M`;
+    }
+
+    if (isMeasuring) {
+      const now = (performance.now() - startTime) / 1000.0 - PRE_START_TIME; // t = -3.5s to 10s
+      if (now >= -PRE_START_TIME && now <= 10.0) {
+        userPoints.push({ t: now, v: currentDist });
+        if (now >= 0) {
+          updateScore();
+        }
+      }
     }
   }
 }
 
-function onDisconnected() {
-  statusEl.textContent = 'Frånkopplad.';
-  document.getElementById('connectBtn').disabled = false;
-  document.getElementById('disconnectBtn').disabled = true;
-  if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null; }
-}
-
-function disconnect() {
-  if (device && device.gatt.connected) {
-    device.gatt.disconnect();
-  }
-}
+// Window load initialization
+window.onload = () => {
+  resizeCanvas();
+  drawGraph();
+};
 </script>
-
-<p style="color:#64748b; font-size:0.8rem; margin-top:2rem;">
-  OBS: Detta är ett första testutkast baserat på en verklig bluetooth-inspelning av din AirLink (015-435) + PS-2103A.
-  Web Bluetooth kräver Chrome på Android (fungerar inte i Safari/iOS) och att sidan laddas via HTTPS
-  (GitHub Pages ger detta automatiskt). Kalibreringsformeln (raw → meter) är okänd tills du kalibrerar
-  mot två kända avstånd ovan.
-</p>
-
 </body>
 </html>
