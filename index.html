@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Motion Matcher – Web Bluetooth</title>
+<title>grafapp</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
   body { 
@@ -22,10 +22,16 @@
     height: 48px; 
     display: flex; 
     align-items: center; 
-    padding: 0 8px; 
+    padding: 0 12px; 
     gap: 8px; 
     border-bottom: 2px solid #004d88; 
     flex-shrink: 0; 
+  }
+
+  .tb-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
 
   .tb-btn { 
@@ -44,7 +50,7 @@
   }
   .tb-btn:active { background: #003d6b; }
   
-  /* Record Button (Red circle) */
+  /* Record Button (Red/Gray circle) */
   .rec-btn { 
     width: 36px; 
     height: 36px; 
@@ -101,9 +107,9 @@
     border: 1px solid #3385c6; 
     height: 36px; 
     border-radius: 4px; 
-    padding: 0 8px; 
+    padding: 0 10px; 
     font-weight: bold; 
-    font-size: 0.85rem; 
+    font-size: 0.9rem; 
     cursor: pointer; 
   }
 
@@ -162,7 +168,7 @@
     justify-content: center; 
     font-style: italic; 
     font-weight: 900; 
-    font-size: 1.4rem; 
+    font-size: 1.3rem; 
     letter-spacing: 1px; 
   }
 </style>
@@ -170,56 +176,58 @@
 <body>
 
 <div class="toolbar">
-  <!-- Level selection -->
-  <select id="levelSelect" class="tb-select">
-    <option value="1">UNWN 1</option>
-    <option value="2">UNWN 2</option>
-    <option value="3">UNWN 3</option>
-    <option value="4">UNWN 4</option>
-    <option value="5">UNWN 5</option>
-    <option value="6">UNWN 6</option>
-  </select>
+  <!-- Left Side: Connect Button, Mode Dropdown, Level Dropdown, Record Button -->
+  <div class="tb-left">
+    <!-- Connect Sensor Button (Far Left) -->
+    <button id="connectBtn" class="sensor-btn" title="Anslut Sensor">
+      <svg class="sensor-icon" viewBox="0 0 24 24">
+        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z"/>
+      </svg>
+      <span class="warning-badge" id="warnBadge">⚠️</span>
+    </button>
 
-  <!-- Start/Stop Recording Button -->
-  <div id="recBtn" class="rec-btn" title="Starta / Stoppa Mätning">
-    <div class="rec-btn-inner"></div>
+    <!-- Mode Selection Dropdown -->
+    <select id="modeSelect" class="tb-select">
+      <option value="POSITION">STRÄCKA</option>
+      <option value="VELOCITY">HASTIGHET</option>
+    </select>
+    
+    <!-- Graph Number Selection Dropdown -->
+    <select id="levelSelect" class="tb-select">
+      <option value="1">1</option>
+      <option value="2">2</option>
+      <option value="4">4</option>
+      <option value="6">6</option>
+      <option value="7">7</option>
+    </select>
+
+    <!-- Record Button (Red/Gray circle) immediately to the right -->
+    <div id="recBtn" class="rec-btn" title="Starta / Stoppa Mätning">
+      <div class="rec-btn-inner"></div>
+    </div>
   </div>
 
-  <!-- Mode Toggle (POSITION / VELOCITY) -->
-  <button id="modeBtn" class="tb-btn">POSITION</button>
-
-  <!-- Graph Curve Preset Switcher -->
-  <button id="curvePresetBtn" class="tb-btn" title="Nästa Målkurva">📈</button>
-
   <div style="flex:1"></div>
-
-  <!-- Bluetooth Connect Button -->
-  <button id="connectBtn" class="sensor-btn" title="Anslut Sensor">
-    <svg class="sensor-icon" viewBox="0 0 24 24">
-      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z"/>
-    </svg>
-    <span class="warning-badge" id="warnBadge">⚠️</span>
-  </button>
 </div>
 
 <!-- Graph Container -->
 <div class="graph-container" id="graphContainer">
   <canvas id="graphCanvas"></canvas>
-  <div id="countdownOverlay">-3.5</div>
+  <div id="countdownOverlay">-3,5</div>
 </div>
 
 <!-- Bottom Status Display -->
 <div class="bottom-bar">
   <div class="bb-box">
-    <div class="bb-title" id="valLabel">POSITION (M)</div>
-    <div class="bb-val" id="valDisplay">-.-- M</div>
+    <div class="bb-title" id="valLabel">STRÄCKA</div>
+    <div class="bb-val" id="valDisplay">-,-- m</div>
   </div>
   <div class="bb-center">
-    MOTION MATCH
+    GÅ ENLIGT GRAFEN
   </div>
   <div class="bb-box">
-    <div class="bb-title">SCORE</div>
-    <div class="bb-val" id="scoreDisplay">-.--</div>
+    <div class="bb-title">POÄNG</div>
+    <div class="bb-val" id="scoreDisplay">-,--</div>
   </div>
 </div>
 
@@ -244,7 +252,7 @@ let cmd1 = null, status1 = null, cmd2 = null, status2 = null, measure = null, cm
 let keepAliveTimer = null;
 
 // Application State
-let currentMode = 'POSITION'; // 'POSITION' or 'VELOCITY'
+let currentMode = 'POSITION'; // 'POSITION' (Sträcka) or 'VELOCITY' (Hastighet)
 let currentLevel = 1;
 let isMeasuring = false;
 let startTime = 0;
@@ -255,8 +263,7 @@ let animationFrameId = null;
 // DOM Elements
 const levelSelect = document.getElementById('levelSelect');
 const recBtn = document.getElementById('recBtn');
-const modeBtn = document.getElementById('modeBtn');
-const curvePresetBtn = document.getElementById('curvePresetBtn');
+const modeSelect = document.getElementById('modeSelect');
 const connectBtn = document.getElementById('connectBtn');
 const canvas = document.getElementById('graphCanvas');
 const ctx = canvas.getContext('2d');
@@ -265,42 +272,54 @@ const valLabel = document.getElementById('valLabel');
 const valDisplay = document.getElementById('valDisplay');
 const scoreDisplay = document.getElementById('scoreDisplay');
 
+// Helper function for comma formatting
+function formatNumber(num, decimals = 2) {
+  return num.toFixed(decimals).replace('.', ',');
+}
+
 function getTargetValue(level, mode, t) {
   t = Math.max(0, Math.min(10, t));
+  const lvl = parseInt(level);
+
   if (mode === 'POSITION') {
-    switch (parseInt(level)) {
+    switch (lvl) {
       case 1: // Straight line up: 0.4m -> 1.8m
         return 0.4 + 0.14 * t;
       case 2: // Straight line down: 1.8m -> 0.4m
         return 1.8 - 0.14 * t;
-      case 3: // Horizontal line: 1.2m
-        return 1.2;
-      case 4: // Curve up: 0.4m -> 1.9m
-        return 0.4 + 0.015 * t * t;
-      case 5: // Step curve: 0-3s at 0.2m, 3-7s rise to 1.8m, 7-10s at 1.8m
-        if (t < 3) return 0.2;
-        if (t < 7) return 0.2 + (t - 3) * (1.6 / 4);
-        return 1.8;
-      case 6: // Two slopes: 0-6s rise to 0.8m, 6-10s rise to 1.9m
-      default:
+      case 4: // Curved up (f.d. 3/Bild 1): 0.4m at 0s -> 2.0m at 10s
+        return 0.4 + 0.016 * t * t;
+      case 6: // Broken line 2 parts (f.d. 4/Bild 2): 0-6s (0.2->0.8m), 6-10s (0.8->2.0m)
         if (t < 6) return 0.2 + t * (0.6 / 6);
-        return 0.8 + (t - 6) * (1.1 / 4);
+        return 0.8 + (t - 6) * (1.2 / 4);
+      case 7: // 5-segment graph (f.d. 5/Bild 3)
+      default:
+        if (t < 1) return 0.4;                  // 0-1s flat at 0.4m
+        if (t < 3) return 0.4 + (t - 1) * 0.5; // 1-3s rise to 1.4m
+        if (t < 5) return 1.4;                  // 3-5s flat at 1.4m
+        if (t < 9) return 1.4 - (t - 5) * 0.2; // 5-9s fall to 0.6m
+        return 0.6;                            // 9-10s flat at 0.6m
     }
   } else { // VELOCITY
-    switch (parseInt(level)) {
-      case 1: // Slope down: 0.4 m/s -> -0.4 m/s
-        return 0.4 - 0.08 * t;
-      case 2: // Constant positive velocity: 0.15 m/s
+    switch (lvl) {
+      case 1: // Vågrät linje på plussidan (+0.15 m/s)
         return 0.15;
-      case 3: // Constant negative velocity: -0.15 m/s
+      case 2: // Vågrät linje på minussidan (-0.15 m/s)
         return -0.15;
-      case 4: // Linear decrease: 0.5 -> -0.5 m/s
-        return 0.5 - 0.10 * t;
-      case 5: // Step velocity: +0.3 m/s then -0.3 m/s
-        return t < 5 ? 0.3 : -0.3;
-      case 6: // Wave curve
+      case 4: // Stigande linje (0.0 m/s -> 0.32 m/s)
+        return 0.032 * t;
+      case 5:
+      case 6: // Tre delar: 0-3s (0.0 m/s), 3-7s (0.4 m/s), 7-10s (0.0 m/s)
+        if (t < 3) return 0.0;
+        if (t < 7) return 0.4;
+        return 0.0;
+      case 7: // Fem delar: 0-2s (0.0), 2-4s (0.3), 4-6s (0.0), 6-8s (-0.3), 8-10s (0.0)
       default:
-        return 0.3 * Math.cos((t * Math.PI) / 5);
+        if (t < 2) return 0.0;
+        if (t < 4) return 0.3;
+        if (t < 6) return 0.0;
+        if (t < 8) return -0.3;
+        return 0.0;
     }
   }
 }
@@ -308,7 +327,7 @@ function getTargetValue(level, mode, t) {
 function updateScore() {
   const validPoints = userPoints.filter(p => p.t >= 0 && p.t <= 10);
   if (validPoints.length < 2) {
-    scoreDisplay.textContent = '-.--';
+    scoreDisplay.textContent = '-,--';
     return;
   }
 
@@ -340,7 +359,7 @@ function updateScore() {
   }
 
   const score = Math.max(0, r2 * 100);
-  scoreDisplay.textContent = score.toFixed(2);
+  scoreDisplay.textContent = formatNumber(score, 2);
 }
 
 function drawGraph() {
@@ -393,7 +412,7 @@ function drawGraph() {
     ctx.fillText(t.toString(), x, marginTop + graphH + 18);
   }
 
-  // Horizontal Grid (Values)
+  // Horizontal Grid (Values with comma decimal)
   const yTicks = currentMode === 'POSITION' ? [0.0, 0.4, 0.8, 1.2, 1.6, 2.0] : [-0.8, -0.4, 0.0, 0.4, 0.8];
   yTicks.forEach(val => {
     const y = getCanvasY(val);
@@ -403,7 +422,7 @@ function drawGraph() {
     ctx.stroke();
 
     ctx.textAlign = 'right';
-    ctx.fillText(val.toFixed(1), marginLeft - 8, y + 4);
+    ctx.fillText(formatNumber(val, 1), marginLeft - 8, y + 4);
   });
 
   // t = 0 Line (Thicker Vertical)
@@ -419,12 +438,12 @@ function drawGraph() {
   ctx.fillStyle = '#0f172a';
   ctx.font = 'bold 12px system-ui, sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText('TIME (s)', marginLeft + graphW / 2, height - 6);
+  ctx.fillText('TID (s)', marginLeft + graphW / 2, height - 6);
 
   ctx.save();
   ctx.translate(16, marginTop + graphH / 2);
   ctx.rotate(-Math.PI / 2);
-  ctx.fillText(currentMode === 'POSITION' ? 'POSITION (m)' : 'VELOCITY (m/s)', 0, 0);
+  ctx.fillText(currentMode === 'POSITION' ? 'STRÄCKA (m)' : 'HASTIGHET (m/s)', 0, 0);
   ctx.restore();
 
   // Draw Target Curve (Solid Black Line)
@@ -465,7 +484,7 @@ function drawGraph() {
 
     if (remainingCD > 0) {
       countdownOverlay.style.display = 'block';
-      countdownOverlay.textContent = `-${remainingCD.toFixed(1)}`;
+      countdownOverlay.textContent = `-${formatNumber(remainingCD, 1)}`;
     } else {
       countdownOverlay.style.display = 'none';
       const curT = elapsed - PRE_START_TIME;
@@ -487,28 +506,22 @@ function resizeCanvas() {
 }
 window.addEventListener('resize', resizeCanvas);
 
-// Mode Toggle Button
-modeBtn.addEventListener('click', () => {
-  currentMode = currentMode === 'POSITION' ? 'VELOCITY' : 'POSITION';
-  modeBtn.textContent = currentMode;
-  valLabel.textContent = currentMode === 'POSITION' ? 'POSITION (M)' : 'VELOCITY (M/S)';
-  valDisplay.textContent = currentMode === 'POSITION' ? `${latestValue.toFixed(2)} M` : `${latestValue.toFixed(2)} M/S`;
+// Mode Selection Dropdown
+modeSelect.addEventListener('change', (e) => {
+  currentMode = e.target.value;
+  valLabel.textContent = currentMode === 'POSITION' ? 'STRÄCKA' : 'HASTIGHET';
+  valDisplay.textContent = currentMode === 'POSITION' 
+    ? `${formatNumber(latestValue, 2)} m` 
+    : `${formatNumber(latestValue, 2)} m/s`;
   userPoints = [];
-  scoreDisplay.textContent = '-.--';
+  scoreDisplay.textContent = '-,--';
 });
 
 // Level Switcher
 levelSelect.addEventListener('change', (e) => {
   currentLevel = parseInt(e.target.value);
   userPoints = [];
-  scoreDisplay.textContent = '-.--';
-});
-
-curvePresetBtn.addEventListener('click', () => {
-  currentLevel = (currentLevel % 6) + 1;
-  levelSelect.value = currentLevel.toString();
-  userPoints = [];
-  scoreDisplay.textContent = '-.--';
+  scoreDisplay.textContent = '-,--';
 });
 
 // Recording Trigger
@@ -525,7 +538,7 @@ function startRecording() {
   userPoints = [];
   startTime = performance.now();
   recBtn.classList.add('recording');
-  scoreDisplay.textContent = '-.--';
+  scoreDisplay.textContent = '-,--';
 }
 
 function stopRecording() {
@@ -623,7 +636,7 @@ function onMeasurement(event) {
     latestValue = currentDist;
 
     if (currentMode === 'POSITION') {
-      valDisplay.textContent = `${currentDist.toFixed(2)} M`;
+      valDisplay.textContent = `${formatNumber(currentDist, 2)} m`;
     }
 
     if (isMeasuring) {
