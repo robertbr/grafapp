@@ -118,7 +118,7 @@ async function connect() {
   try {
     statusEl.textContent = 'Söker enhet...';
     device = await navigator.bluetooth.requestDevice({
-      filters: [{ namePrefix: '' }], // se kommentar nedan om du vill filtrera på namn
+      acceptAllDevices: true, // visar alla BLE-enheter i listan, välj din AirLink manuellt
       optionalServices: [SERVICE_1, SERVICE_2, 'device_information']
     });
 
