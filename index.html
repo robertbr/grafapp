@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="sv" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>PASCO AirLink Mobile App</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script>
+        tailwind.config = { darkMode: 'class' }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;700&display=swap');
+        body { font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; }
+        .font-mono { font-family: 'JetBrains+Mono', monospace; }
+        /* Smooth scrolling log console */
+        #console-log { scroll-behavior: smooth; }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col">
+
+    <header class="bg-slate-900 border-b border-slate-800 p-4 sticky top-0 z-50 shadow-md">
+        <div class="flex justify-between items-center mb-3">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/30">
+                    <i class="fa-solid fa-satellite-dish text-white"></i>
+                </div>
+                <div>
+                    <h1 class="font-bold text-base leading-tight">PASCO AirLink</h1>
+                    <p class="text-[10px] text-blue-400 font-mono">UUID Protocol v2.0</p>
+                </div>
+            </div>
+            <!-- Status Badge -->
+            <div id="status-badge" class="px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide bg-amber-500/10 text-amber-500 border border-amber-500/20 flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+                Väntar
+            </div>
+        </div>
+
+        <!-- Primary Action Buttons -->
+        <div class="grid grid-cols-2 gap-3 mt-4">
+            <button id="btn-connect" onclick="connectAndSetup()" class="py-3 rounded-xl bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-bold text-sm shadow-lg shadow-blue-600/20 transition-all flex justify-center items-center gap-2">
+                <i class="fa-brands fa-bluetooth"></i> 1. Anslut
+            </button>
+            <button id="btn-start" onclick="startMeasurement()" disabled class="py-3 rounded-xl bg-slate-800 text-slate-500 font-bold text-sm border border-slate-700 transition-all flex justify-center items-center gap-2">
+                <i class="fa-solid fa-play"></i> 2. Starta
+            </button>
+        </div>
+    </header>
+
+    <main class="flex-1 p-4 flex flex-col gap-4">
+        
+        <!-- Big Distance Display -->
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 text-center shadow-xl relative overflow-hidden">
+            <div class="absolute -right-4 -bottom-4 w-24 h-24 bg-blue-500/10 rounded-full blur-2xl"></div>
+            <p class="text-[10px] uppercase tracking-widest text-slate-400 font-semibold mb-2">Avstånd</p>
+            <div class="flex items-baseline justify-center">
+                <span id="dist-main" class="text-6xl font-extrabold tracking-tighter text-white font-mono">-.---</span>
+                <span class="text-xl font-bold text-slate-500 ml-2">m</span>
+            </div>
+            
+            <div class="mt-4 flex justify-between items-center text-xs font-mono bg-slate-950 p-2 rounded-lg border border-slate-800/50">
+                <div class="flex flex-col text-left">
+                    <span class="text-slate-500 text-[9px]">Uppdatering</span>
+                    <span id="hz-indicator" class="text-blue-400 font-bold">0.0 Hz</span>
+                </div>
+                <div class="flex flex-col text-right">
+                    <span class="text-slate-500 text-[9px]">Paket</span>
+                    <span id="packet-counter" class="text-emerald-400 font-bold">0</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Realtime Chart -->
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl h-64 flex flex-col">
+            <p class="text-[10px] uppercase tracking-widest text-slate-400 font-semibold mb-2"><i class="fa-solid fa-chart-line mr-1"></i> Graf</p>
+            <div class="flex-1 w-full relative">
+                <canvas id="distanceChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Debug Console -->
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl flex-1 min-h-[200px] flex flex-col">
+            <div class="flex justify-between items-center mb-2">
+                <p class="text-[10px] uppercase tracking-widest text-slate-400 font-semibold"><i class="fa-solid fa-terminal mr-1"></i> Systemlogg</p>
+                <button onclick="clearLog()" class="text-[10px] text-slate-500 hover:text-slate-300 px-2 py-1 bg-slate-800 rounded border border-slate-700">Rensa</button>
+            </div>
+            <div id="console-log" class="flex-1 bg-slate-950 rounded-lg p-3 overflow-y-auto font-mono text-[10px] space-y-1.5 border border-slate-800 max-h-[250px]">
+                <div class="text-slate-500 italic">Redo. Klicka på Anslut och välj "015-435>00".</div>
+            </div>
+        </div>
+        
+    </main>
+
+    <script>
+        // --- PASCO UUIDs baserat på Wireshark-analysen ---
+        // Huvudtjänster
+        const SERVICE_UUIDS = [
+            '4a5c0000-0000-0000-0000-5c1e741f1c00', // Primär tjänst
+            '4a5c0001-0000-0000-0000-5c1e741f1c00'  // Sekundär tjänst (innehåller 0x0028 kanal)
+        ];
+
+        // Skrivkanal för kommandon (Det mobilen skickade till i loggen)
+        const CMD_UUID_PREFIX = '4a5c0000-0100'; 
+        
+        // Datakanaler vi måste lyssna på (Dessa dök upp i Wireshark!)
+        const DATA_UUID_1 = '4a5c0000-0300'; // Tidigare kända kanalen
+        const DATA_UUID_2 = '4a5c0001-0003'; // DEN NYUPPTÄCKTA KANALEN (0x0028)!
+
+        let bleDevice = null;
+        let cmdCharacteristic = null;
+        let dataCharacteristics = [];
+        
+        let isConnected = false;
+        let packetCount = 0;
+        let lastPacketTime = performance.now();
+        
+        let chart = null;
+
+        window.onload = () => {
+            initChart();
+        };
+
+        function initChart() {
+            const ctx = document.getElementById('distanceChart').getContext('2d');
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: { labels: [], datasets: [{
+                    label: 'Meter', data: [], borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                    borderWidth: 2, fill: true, pointRadius: 0, tension: 0.1
+                }]},
+                options: {
+                    responsive: true, maintainAspectRatio: false, animation: false,
+                    scales: {
+                        x: { display: false },
+                        y: { min: 0, max: 2, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#64748b', font: {size: 10} } }
+                    },
+                    plugins: { legend: { display: false } }
+                }
+            });
+        }
+
+        function log(msg, type = 'info') {
+            const logEl = document.getElementById('console-log');
+            const div = document.createElement('div');
+            const time = new Date().toLocaleTimeString('sv-SE', {hour12:false, fractionalSecondDigits: 1}).split(',')[0];
+            
+            let color = 'text-slate-300';
+            if (type === 'error') color = 'text-red-400 font-bold';
+            if (type === 'success') color = 'text-emerald-400';
+            if (type === 'data') color = 'text-sky-300 opacity-80';
+            if (type === 'cmd') color = 'text-amber-300';
+
+            div.className = color;
+            div.innerHTML = `<span class="text-slate-600 mr-2">[${time}]</span>${msg}`;
+            logEl.appendChild(div);
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('console-log').innerHTML = '';
+        }
+
+        async function connectAndSetup() {
+            if (isConnected) {
+                if(bleDevice) bleDevice.gatt.disconnect();
+                return;
+            }
+
+            try {
+                log('Begär Bluetooth-enhet...', 'info');
+                bleDevice = await navigator.bluetooth.requestDevice({
+                    acceptAllDevices: true,
+                    optionalServices: SERVICE_UUIDS
+                });
+
+                bleDevice.addEventListener('gattserverdisconnected', onDisconnect);
+                
+                log(`Ansluter till GATT på: ${bleDevice.name}...`, 'info');
+                const server = await bleDevice.gatt.connect();
+                log('GATT ansluten! Söker tjänster...', 'success');
+
+                cmdCharacteristic = null;
+                dataCharacteristics = [];
+
+                // Sök igenom tjänsterna
+                for (let uuid of SERVICE_UUIDS) {
+                    try {
+                        const service = await server.getPrimaryService(uuid);
+                        const characteristics = await service.getCharacteristics();
+                        
+                        for (let char of characteristics) {
+                            const uuidStr = char.uuid.toLowerCase();
+                            
+                            // Hitta kommandokanal
+                            if (uuidStr.includes(CMD_UUID_PREFIX) && (char.properties.write || char.properties.writeWithoutResponse)) {
+                                cmdCharacteristic = char;
+                                log(`Hittade Kommandokanal: ${uuidStr.substring(0,13)}...`, 'success');
+                            }
+                            
+                            // Hitta datakanaler
+                            if ((uuidStr.includes(DATA_UUID_1) || uuidStr.includes(DATA_UUID_2)) && (char.properties.notify || char.properties.indicate)) {
+                                dataCharacteristics.push(char);
+                                log(`Hittade Datakanal: ${uuidStr.substring(0,13)}...`, 'success');
+                            }
+                        }
+                    } catch (e) {
+                        log(`Kunde inte läsa tjänst ${uuid.substring(0,8)}: ${e.message}`, 'error');
+                    }
+                }
+
+                if (!cmdCharacteristic) throw new Error("Hittade ingen skrivkanal för kommandon!");
+                if (dataCharacteristics.length === 0) throw new Error("Hittade inga datakanaler!");
+
+                // --- DEN AVGÖRANDE HANDSKAKNINGEN ---
+                // I Wireshark väntade telefonen på Write Response från CCCD (0x0029) innan den gick vidare.
+                // startNotifications() gör exakt detta i bakgrunden. Vi MÅSTE vänta (await) på alla!
+                log('Initierar handskakning (lyssnar på kanaler)...', 'info');
+                
+                for (let char of dataCharacteristics) {
+                    await char.startNotifications();
+                    char.addEventListener('characteristicvaluechanged', handleIncomingData);
+                    log(`✓ Lyssnar nu aktivt på: ${char.uuid.substring(0,13)}...`, 'success');
+                }
+
+                isConnected = true;
+                updateUIState(true);
+                log('Redo! Handskakning klar. Tryck på Starta.', 'success');
+
+            } catch (error) {
+                log(`Fel: ${error.message}`, 'error');
+                updateUIState(false);
+            }
+        }
+
+        async function startMeasurement() {
+            if (!cmdCharacteristic) return;
+            
+            try {
+                log('🚀 Påbörjar startsekvens...', 'info');
+                
+                // Steg 1: 0x27 (Initiering)
+                log('-> Skickar 0x27', 'cmd');
+                await sendCommand([0x27]);
+                await sleep(20); // Exakt paus baserat på Wireshark log (Frame 1179 -> 1181)
+
+                // Steg 2: 0x18 (Keepalive/Status)
+                log('-> Skickar 0x18', 'cmd');
+                await sendCommand([0x18]);
+                await sleep(50); // Paus (Frame 1181 -> 1185)
+
+                // Steg 3: 0x04 0x00 (Config)
+                log('-> Skickar 0x0400', 'cmd');
+                await sendCommand([0x04, 0x00]);
+                await sleep(20);
+
+                // Steg 4: 0x25 0x1f 0x01 (Stream Request for Distance Sensor)
+                log('-> Skickar 0x251f01', 'cmd');
+                await sendCommand([0x25, 0x1f, 0x01]);
+                await sleep(20);
+                
+                // Fallback PASCO Start
+                log('-> Skickar 0x01 (Main Start)', 'cmd');
+                await sendCommand([0x01]);
+
+                log('✅ Startkommandon skickade!', 'success');
+
+            } catch (error) {
+                log(`Start misslyckades: ${error.message}`, 'error');
+            }
+        }
+
+        async function sendCommand(bytes) {
+            const data = new Uint8Array(bytes);
+            if (cmdCharacteristic.properties.writeWithoutResponse) {
+                await cmdCharacteristic.writeValueWithoutResponse(data);
+            } else {
+                await cmdCharacteristic.writeValue(data);
+            }
+        }
+
+        function handleIncomingData(event) {
+            const dataView = event.target.value;
+            const bytes = new Uint8Array(dataView.buffer);
+            
+            packetCount++;
+            document.getElementById('packet-counter').innerText = packetCount;
+
+            // Beräkna Hz
+            const now = performance.now();
+            const delta = now - lastPacketTime;
+            lastPacketTime = now;
+            if (delta > 0 && packetCount % 5 === 0) { // Uppdatera Hz var 5:e paket för stabilitet
+                const hz = (1000 / delta).toFixed(1);
+                document.getElementById('hz-indicator').innerText = hz + ' Hz';
+            }
+
+            // Logga rådata (kort format)
+            let hex = Array.from(bytes).map(b => b.toString(16).padStart(2,'0')).join('');
+            if(packetCount <= 10 || packetCount % 20 === 0) {
+                log(`RX: ${hex}`, 'data'); // Logga inte varje paket för att spara prestanda på mobil
+            }
+
+            // Avkoda Avstånd (Söker efter Float32 på offset 2, 3 eller 4)
+            let meters = null;
+            if (dataView.byteLength >= 6) {
+                const f2 = dataView.getFloat32(2, true);
+                if (f2 > 0.05 && f2 < 10.0) meters = f2;
+            }
+            if (meters === null && dataView.byteLength >= 7) {
+                const f3 = dataView.getFloat32(3, true);
+                if (f3 > 0.05 && f3 < 10.0) meters = f3;
+            }
+
+            if (meters !== null) {
+                // Uppdatera UI
+                document.getElementById('dist-main').innerText = meters.toFixed(3);
+                
+                // Uppdatera graf (max 50 punkter på mobil för prestanda)
+                chart.data.labels.push('');
+                chart.data.datasets[0].data.push(meters);
+                if (chart.data.labels.length > 50) {
+                    chart.data.labels.shift();
+                    chart.data.datasets[0].data.shift();
+                }
+                chart.update();
+            }
+        }
+
+        function onDisconnect() {
+            log('Enhet frånkopplad.', 'error');
+            isConnected = false;
+            updateUIState(false);
+        }
+
+        function updateUIState(connected) {
+            const btnConnect = document.getElementById('btn-connect');
+            const btnStart = document.getElementById('btn-start');
+            const badge = document.getElementById('status-badge');
+
+            if (connected) {
+                btnConnect.innerHTML = '<i class="fa-solid fa-xmark"></i> Koppla från';
+                btnConnect.className = 'py-3 rounded-xl bg-red-900 text-red-300 font-bold text-sm border border-red-700 active:bg-red-800 transition-all flex justify-center items-center gap-2';
+                
+                btnStart.disabled = false;
+                btnStart.className = 'py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-bold text-sm shadow-lg shadow-emerald-600/20 transition-all flex justify-center items-center gap-2';
+                
+                badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-blue-400"></span> Ansluten';
+                badge.className = 'px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide bg-blue-500/10 text-blue-400 border border-blue-500/20 flex items-center gap-1.5';
+            } else {
+                btnConnect.innerHTML = '<i class="fa-brands fa-bluetooth"></i> 1. Anslut';
+                btnConnect.className = 'py-3 rounded-xl bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-bold text-sm shadow-lg shadow-blue-600/20 transition-all flex justify-center items-center gap-2';
+                
+                btnStart.disabled = true;
+                btnStart.className = 'py-3 rounded-xl bg-slate-800 text-slate-500 font-bold text-sm border border-slate-700 transition-all flex justify-center items-center gap-2';
+                
+                badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span> Väntar';
+                badge.className = 'px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide bg-amber-500/10 text-amber-500 border border-amber-500/20 flex items-center gap-1.5';
+                
+                document.getElementById('dist-main').innerText = '-.---';
+            }
+        }
+
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+    </script>
+</body>
+</html>
