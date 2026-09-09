@@ -179,7 +179,7 @@
   <!-- Left Side: Connect Button, Mode Dropdown, Level Dropdown, Record Button -->
   <div class="tb-left">
     <!-- Connect Sensor Button (Far Left) -->
-    <button id="connectBtn" class="sensor-btn" title="Anslut Sensor">
+    <button id="connectBtn" class="sensor-btn" title="Anslut sensor">
       <svg class="sensor-icon" viewBox="0 0 24 24">
         <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z"/>
       </svg>
@@ -201,19 +201,27 @@
       <option value="7">7</option>
     </select>
 
-    <!-- Record Button (Red/Gray circle) immediately to the right -->
-    <div id="recBtn" class="rec-btn" title="Starta / Stoppa Mätning">
-      <div class="rec-btn-inner"></div>
-    </div>
+    <!-- Reset / Restart Button (Curved arrow) -->
+    <button id="resetBtn" class="tb-btn" title="Nollställ och börja om" style="padding: 0 10px;">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.85.83 6.72 2.24"/>
+        <path d="M21 3v6h-6"/>
+      </svg>
+    </button>
   </div>
 
   <div style="flex:1"></div>
+
+  <!-- Record Button (Red/Gray circle) placed at the far right -->
+  <div id="recBtn" class="rec-btn" title="Starta / Stoppa Mätning">
+    <div class="rec-btn-inner"></div>
+  </div>
 </div>
 
 <!-- Graph Container -->
 <div class="graph-container" id="graphContainer">
   <canvas id="graphCanvas"></canvas>
-  <div id="countdownOverlay">-3,5</div>
+  <div id="countdownOverlay">3</div>
 </div>
 
 <!-- Bottom Status Display -->
@@ -245,7 +253,7 @@ const CMD3_CHAR        = '4a5c0001-0005-0000-0000-5c1e741f1c00'; // handle 0x002
 
 // Calibration: 5500 raw = 1.0 m, 0 raw = 0.0 m
 const RAW_SCALE = 1.0 / 5500.0;
-const PRE_START_TIME = 3.5; // 3.5 seconds countdown before 0.0s
+const PRE_START_TIME = 3.0; // 3 seconds countdown before 0.0s
 
 let device = null, server = null;
 let cmd1 = null, status1 = null, cmd2 = null, status2 = null, measure = null, cmd3 = null;
@@ -268,6 +276,7 @@ let lastTimeMs = null;
 // DOM Elements
 const levelSelect = document.getElementById('levelSelect');
 const recBtn = document.getElementById('recBtn');
+const resetBtn = document.getElementById('resetBtn');
 const modeSelect = document.getElementById('modeSelect');
 const connectBtn = document.getElementById('connectBtn');
 const canvas = document.getElementById('graphCanvas');
@@ -333,7 +342,13 @@ function getTargetValue(level, mode, t) {
 }
 
 function updateScore() {
-  const validPoints = userPoints.filter(p => p.t >= 0 && p.t <= 10);
+  if (userPoints.length === 0) {
+    scoreDisplay.textContent = '-,--';
+    return;
+  }
+
+  // Filter valid points only from t = 0 to current elapsed time
+  const validPoints = userPoints.filter(p => p.t >= 0);
   if (validPoints.length < 2) {
     scoreDisplay.textContent = '-,--';
     return;
@@ -342,31 +357,31 @@ function updateScore() {
   let sumSqErr = 0;
   let sumSqTot = 0;
   let sumTarget = 0;
+  const len = validPoints.length;
 
-  validPoints.forEach(p => {
-    const target = getTargetValue(currentLevel, currentMode, p.t);
-    sumTarget += target;
-  });
-  const meanTarget = sumTarget / validPoints.length;
+  for (let i = 0; i < len; i++) {
+    sumTarget += getTargetValue(currentLevel, currentMode, validPoints[i].t);
+  }
+  const meanTarget = sumTarget / len;
 
-  validPoints.forEach(p => {
+  for (let i = 0; i < len; i++) {
+    const p = validPoints[i];
     const target = getTargetValue(currentLevel, currentMode, p.t);
     const err = p.v - target;
     sumSqErr += err * err;
     const diff = target - meanTarget;
     sumSqTot += diff * diff;
-  });
+  }
 
   let r2 = 0;
-  if (sumSqTot < 0.001) {
-    // For horizontal lines where target variance is ~0
-    const mse = sumSqErr / validPoints.length;
+  if (sumSqTot < 0.0001) {
+    const mse = sumSqErr / len;
     r2 = Math.max(0, 1 - mse / 0.04);
   } else {
     r2 = 1 - (sumSqErr / sumSqTot);
   }
 
-  const score = Math.max(0, r2 * 100);
+  const score = Math.max(0, Math.min(100, r2 * 100));
   scoreDisplay.textContent = formatNumber(score, 2);
 }
 
@@ -375,11 +390,11 @@ function drawGraph() {
   const height = canvas.height;
   ctx.clearRect(0, 0, width, height);
 
-  // Margins
-  const marginLeft = 60;
-  const marginRight = 20;
-  const marginTop = 20;
-  const marginBottom = 40;
+  // Margins adjusted to fit 3x larger font sizes (36px)
+  const marginLeft = 130;
+  const marginRight = 30;
+  const marginTop = 30;
+  const marginBottom = 110;
 
   const graphW = width - marginLeft - marginRight;
   const graphH = height - marginTop - marginBottom;
@@ -402,11 +417,11 @@ function drawGraph() {
     return marginTop + graphH - ((v - minY) / (maxY - minY)) * graphH;
   }
 
-  // Draw Grid Lines & Ticks
+  // Draw Grid Lines & Ticks with 3x larger font (36px)
   ctx.strokeStyle = '#e2e8f0';
   ctx.lineWidth = 1;
   ctx.fillStyle = '#1e293b';
-  ctx.font = '12px system-ui, sans-serif';
+  ctx.font = '36px system-ui, sans-serif';
 
   // Vertical Grid (Time: -3 to 10)
   for (let t = minX; t <= maxX; t++) {
@@ -417,7 +432,7 @@ function drawGraph() {
     ctx.stroke();
 
     ctx.textAlign = 'center';
-    ctx.fillText(t.toString(), x, marginTop + graphH + 18);
+    ctx.fillText(t.toString(), x, marginTop + graphH + 42);
   }
 
   // Horizontal Grid (Values with comma decimal)
@@ -430,7 +445,7 @@ function drawGraph() {
     ctx.stroke();
 
     ctx.textAlign = 'right';
-    ctx.fillText(formatNumber(val, 1), marginLeft - 8, y + 4);
+    ctx.fillText(formatNumber(val, 1), marginLeft - 12, y + 12);
   });
 
   // t = 0 Line (Thicker Vertical)
@@ -442,14 +457,14 @@ function drawGraph() {
   ctx.lineTo(xZero, marginTop + graphH);
   ctx.stroke();
 
-  // Axis Labels
+  // Axis Labels with 3x larger font (36px)
   ctx.fillStyle = '#0f172a';
-  ctx.font = 'bold 12px system-ui, sans-serif';
+  ctx.font = 'bold 36px system-ui, sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText('TID (s)', marginLeft + graphW / 2, height - 6);
+  ctx.fillText('TID (s)', marginLeft + graphW / 2, height - 15);
 
   ctx.save();
-  ctx.translate(16, marginTop + graphH / 2);
+  ctx.translate(40, marginTop + graphH / 2);
   ctx.rotate(-Math.PI / 2);
   ctx.fillText(currentMode === 'POSITION' ? 'STRÄCKA (m)' : 'HASTIGHET (m/s)', 0, 0);
   ctx.restore();
@@ -488,14 +503,23 @@ function drawGraph() {
   // Animation Loop for Recording & Timer
   if (isMeasuring) {
     const elapsed = (performance.now() - startTime) / 1000.0;
-    const remainingCD = PRE_START_TIME - elapsed;
+    const curT = elapsed - PRE_START_TIME;
 
-    if (remainingCD > 0) {
+    if (curT < 0) {
       countdownOverlay.style.display = 'block';
-      countdownOverlay.textContent = `-${formatNumber(remainingCD, 1)}`;
+      if (curT < -2.0) {
+        countdownOverlay.textContent = '3';
+      } else if (curT < -1.0) {
+        countdownOverlay.textContent = '2';
+      } else {
+        countdownOverlay.textContent = '1';
+      }
+    } else if (curT <= 0.4) {
+      // Show 0 briefly when starting
+      countdownOverlay.style.display = 'block';
+      countdownOverlay.textContent = '0';
     } else {
       countdownOverlay.style.display = 'none';
-      const curT = elapsed - PRE_START_TIME;
       if (curT >= 10.0) {
         stopRecording();
       }
@@ -542,6 +566,11 @@ recBtn.addEventListener('click', () => {
   } else {
     stopRecording();
   }
+});
+
+// Reset / Restart Button Listener
+resetBtn.addEventListener('click', () => {
+  startRecording();
 });
 
 function startRecording() {
