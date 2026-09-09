@@ -256,9 +256,14 @@ let currentMode = 'POSITION'; // 'POSITION' (Sträcka) or 'VELOCITY' (Hastighet)
 let currentLevel = 1;
 let isMeasuring = false;
 let startTime = 0;
-let latestValue = 0;
+let latestDistance = 0;
+let latestVelocity = 0;
 let userPoints = []; // Array of { t: seconds, v: distance/velocity }
 let animationFrameId = null;
+
+// Realtime Velocity Calculation State
+let lastDist = null;
+let lastTimeMs = null;
 
 // DOM Elements
 const levelSelect = document.getElementById('levelSelect');
@@ -272,8 +277,11 @@ const valLabel = document.getElementById('valLabel');
 const valDisplay = document.getElementById('valDisplay');
 const scoreDisplay = document.getElementById('scoreDisplay');
 
-// Helper function for comma formatting
+// Safe number formatting for Swedish decimal comma
 function formatNumber(num, decimals = 2) {
+  if (typeof num !== 'number' || isNaN(num) || !isFinite(num)) {
+    return '-,--';
+  }
   return num.toFixed(decimals).replace('.', ',');
 }
 
@@ -287,12 +295,12 @@ function getTargetValue(level, mode, t) {
         return 0.4 + 0.14 * t;
       case 2: // Straight line down: 1.8m -> 0.4m
         return 1.8 - 0.14 * t;
-      case 4: // Curved up (f.d. 3/Bild 1): 0.4m at 0s -> 2.0m at 10s
+      case 4: // Curved up: 0.4m at 0s -> 2.0m at 10s
         return 0.4 + 0.016 * t * t;
-      case 6: // Broken line 2 parts (f.d. 4/Bild 2): 0-6s (0.2->0.8m), 6-10s (0.8->2.0m)
+      case 6: // Broken line 2 parts: 0-6s (0.2->0.8m), 6-10s (0.8->2.0m)
         if (t < 6) return 0.2 + t * (0.6 / 6);
         return 0.8 + (t - 6) * (1.2 / 4);
-      case 7: // 5-segment graph (f.d. 5/Bild 3)
+      case 7: // 5-segment graph
       default:
         if (t < 1) return 0.4;                  // 0-1s flat at 0.4m
         if (t < 3) return 0.4 + (t - 1) * 0.5; // 1-3s rise to 1.4m
@@ -302,18 +310,18 @@ function getTargetValue(level, mode, t) {
     }
   } else { // VELOCITY
     switch (lvl) {
-      case 1: // Vågrät linje på plussidan (+0.15 m/s)
+      case 1: // Horizontal line (+0.15 m/s)
         return 0.15;
-      case 2: // Vågrät linje på minussidan (-0.15 m/s)
+      case 2: // Horizontal line (-0.15 m/s)
         return -0.15;
-      case 4: // Stigande linje (0.0 m/s -> 0.32 m/s)
+      case 4: // Rising line (0.0 m/s -> 0.32 m/s)
         return 0.032 * t;
       case 5:
-      case 6: // Tre delar: 0-3s (0.0 m/s), 3-7s (0.4 m/s), 7-10s (0.0 m/s)
+      case 6: // Three parts: 0-3s (0.0 m/s), 3-7s (0.4 m/s), 7-10s (0.0 m/s)
         if (t < 3) return 0.0;
         if (t < 7) return 0.4;
         return 0.0;
-      case 7: // Fem delar: 0-2s (0.0), 2-4s (0.3), 4-6s (0.0), 6-8s (-0.3), 8-10s (0.0)
+      case 7: // Five parts: 0-2s (0.0), 2-4s (0.3), 4-6s (0.0), 6-8s (-0.3), 8-10s (0.0)
       default:
         if (t < 2) return 0.0;
         if (t < 4) return 0.3;
@@ -510,10 +518,13 @@ window.addEventListener('resize', resizeCanvas);
 modeSelect.addEventListener('change', (e) => {
   currentMode = e.target.value;
   valLabel.textContent = currentMode === 'POSITION' ? 'STRÄCKA' : 'HASTIGHET';
+  const valToShow = currentMode === 'POSITION' ? latestDistance : latestVelocity;
   valDisplay.textContent = currentMode === 'POSITION' 
-    ? `${formatNumber(latestValue, 2)} m` 
-    : `${formatNumber(latestValue, 2)} m/s`;
+    ? `${formatNumber(valToShow, 2)} m` 
+    : `${formatNumber(valToShow, 2)} m/s`;
   userPoints = [];
+  lastDist = null;
+  lastTimeMs = null;
   scoreDisplay.textContent = '-,--';
 });
 
@@ -536,6 +547,8 @@ recBtn.addEventListener('click', () => {
 function startRecording() {
   isMeasuring = true;
   userPoints = [];
+  lastDist = null;
+  lastTimeMs = null;
   startTime = performance.now();
   recBtn.classList.add('recording');
   scoreDisplay.textContent = '-,--';
@@ -633,16 +646,39 @@ function onMeasurement(event) {
   if (dv.byteLength >= 3) {
     const raw = dv.getUint16(1, true); // Little-endian raw reading
     const currentDist = raw * RAW_SCALE; // 5500 raw = 1 m
-    latestValue = currentDist;
+    latestDistance = currentDist;
 
-    if (currentMode === 'POSITION') {
-      valDisplay.textContent = `${formatNumber(currentDist, 2)} m`;
+    const nowMs = performance.now();
+
+    // Calculate instantaneous smoothed velocity
+    if (lastDist !== null && lastTimeMs !== null) {
+      const dt = (nowMs - lastTimeMs) / 1000.0;
+      if (dt > 0.02) { // Minimum 20ms delta
+        const instVel = (currentDist - lastDist) / dt;
+        // Low-pass filter (0.3 weight for new value to smooth ultrasound noise)
+        latestVelocity = latestVelocity * 0.7 + instVel * 0.3;
+        lastDist = currentDist;
+        lastTimeMs = nowMs;
+      }
+    } else {
+      lastDist = currentDist;
+      lastTimeMs = nowMs;
+      latestVelocity = 0;
     }
 
+    // Live display updates for both POSITION and VELOCITY
+    if (currentMode === 'POSITION') {
+      valDisplay.textContent = `${formatNumber(latestDistance, 2)} m`;
+    } else {
+      valDisplay.textContent = `${formatNumber(latestVelocity, 2)} m/s`;
+    }
+
+    // Record data points when measurement is active
     if (isMeasuring) {
-      const now = (performance.now() - startTime) / 1000.0 - PRE_START_TIME; // t = -3.5s to 10s
+      const now = (nowMs - startTime) / 1000.0 - PRE_START_TIME; // t = -3.5s to 10s
       if (now >= -PRE_START_TIME && now <= 10.0) {
-        userPoints.push({ t: now, v: currentDist });
+        const valToRecord = currentMode === 'POSITION' ? latestDistance : latestVelocity;
+        userPoints.push({ t: now, v: valToRecord });
         if (now >= 0) {
           updateScore();
         }
