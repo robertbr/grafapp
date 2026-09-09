@@ -1,730 +1,240 @@
 <!DOCTYPE html>
-<html lang="sv" class="dark">
+<html lang="sv">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Grafapp - PASCO Avståndsmätare</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <script>
-        tailwind.config = { darkMode: 'class' }
-    </script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
-        body { font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; }
-        .font-mono { font-family: 'JetBrains+Mono', monospace; }
-        .custom-scrollbar::-webkit-scrollbar { width: 5px; height: 5px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: #020617; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 3px; }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PASCO AirLink – Web Bluetooth</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 700px; margin: 2rem auto; padding: 0 1rem; background:#0f172a; color:#e2e8f0; }
+  h1 { font-size: 1.3rem; }
+  button { font-size: 1rem; padding: 0.6rem 1.2rem; margin: 0.3rem 0.3rem 0.3rem 0; border-radius: 8px; border: none; cursor: pointer; }
+  #connectBtn { background:#22c55e; color:#052e16; font-weight:600; }
+  #disconnectBtn { background:#ef4444; color:#450a0a; font-weight:600; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  #status { padding: 0.6rem; border-radius: 8px; background:#1e293b; margin: 0.8rem 0; }
+  #reading { font-size: 3rem; font-weight: 700; margin: 1rem 0; }
+  #reading span { font-size: 1.2rem; color:#94a3b8; }
+  #log { background:#000; color:#4ade80; font-family: monospace; font-size: 0.75rem; height: 220px; overflow-y: auto; padding: 0.6rem; border-radius: 8px; white-space: pre-wrap; }
+  .row { display:flex; gap: 1rem; flex-wrap: wrap; }
+  .card { background:#1e293b; padding: 1rem; border-radius: 10px; margin: 0.6rem 0; }
+  label { display:block; font-size:0.85rem; color:#94a3b8; margin-top:0.5rem;}
+  input { width: 100%; padding: 0.4rem; border-radius:6px; border:1px solid #334155; background:#0f172a; color:#e2e8f0; }
+</style>
 </head>
-<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col selection:bg-blue-600 selection:text-white">
-
-    <header class="bg-slate-900/90 border-b border-slate-800 p-4 sticky top-0 z-50 backdrop-blur-md shadow-lg">
-        <div class="max-w-5xl mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div class="flex items-center gap-3">
-                <div class="w-11 h-11 rounded-2xl bg-gradient-to-tr from-blue-600 to-sky-400 flex items-center justify-center shadow-lg shadow-blue-500/25">
-                    <i class="fa-solid fa-satellite-dish text-white text-lg"></i>
-                </div>
-                <div>
-                    <h1 class="font-extrabold text-lg leading-tight tracking-tight text-white">Grafapp <span class="text-xs px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 font-mono ml-1">PASCO BLE</span></h1>
-                    <p class="text-xs text-slate-400">Avståndssensor & Realtidsanalys</p>
-                </div>
-            </div>
-
-            <!-- Status Indicator Badge -->
-            <div class="flex items-center gap-2">
-                <div id="status-badge" class="px-3 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center gap-2">
-                    <span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
-                    <span id="status-text">Väntar</span>
-                </div>
-
-                <!-- Simulation Toggle -->
-                <button onclick="toggleSimulation()" id="sim-btn" class="px-3 py-1.5 rounded-full text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition flex items-center gap-1.5" title="Testa med simulerad avståndsdata utan bluetooth">
-                    <i class="fa-solid fa-vial text-purple-400"></i>
-                    <span id="sim-btn-text">Simulering Off</span>
-                </button>
-            </div>
-        </div>
-
-        <!-- Connection and Control Action Bar -->
-        <div class="max-w-5xl mx-auto grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4">
-            <button id="btn-connect" onclick="connectAndSetup()" class="py-2.5 px-3 rounded-xl bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-bold text-xs sm:text-sm shadow-lg shadow-blue-600/20 transition flex justify-center items-center gap-2 cursor-pointer">
-                <i class="fa-brands fa-bluetooth"></i>
-                <span id="btn-connect-label">1. Anslut AirLink</span>
-            </button>
-            
-            <button id="btn-start" onclick="startMeasurement()" disabled class="py-2.5 px-3 rounded-xl bg-slate-800 text-slate-500 font-bold text-xs sm:text-sm border border-slate-700 transition flex justify-center items-center gap-2 cursor-not-allowed">
-                <i class="fa-solid fa-play"></i>
-                <span>2. Starta Mätning</span>
-            </button>
-
-            <button onclick="sendAllStartSequences()" id="btn-force" disabled class="py-2.5 px-3 rounded-xl bg-slate-800 text-slate-500 font-bold text-xs sm:text-sm border border-slate-700 transition flex justify-center items-center gap-2 cursor-not-allowed">
-                <i class="fa-solid fa-bolt"></i>
-                <span>Tvinga Start</span>
-            </button>
-
-            <button onclick="exportCSV()" id="btn-export" disabled class="py-2.5 px-3 rounded-xl bg-slate-800 text-slate-500 font-bold text-xs sm:text-sm border border-slate-700 transition flex justify-center items-center gap-2 cursor-not-allowed">
-                <i class="fa-solid fa-file-csv"></i>
-                <span>Spara CSV</span>
-            </button>
-        </div>
-    </header>
-
-    <main class="max-w-5xl mx-auto flex-1 w-full p-4 grid grid-cols-1 md:grid-cols-12 gap-4">
-
-        <!-- Browser Compatibility Notice Box -->
-        <div id="browser-warning" class="hidden md:col-span-12 bg-amber-950/40 border border-amber-500/30 rounded-2xl p-4 text-xs text-amber-200 flex items-start gap-3">
-            <i class="fa-solid fa-triangle-exclamation text-amber-400 text-lg mt-0.5"></i>
-            <div>
-                <p class="font-bold text-amber-300">Web Bluetooth stöds inte fullt ut i den här miljön!</p>
-                <p class="mt-1 text-amber-200/80">För att ansluta till PASCO AirLink via riktig Bluetooth behöver du <strong>Google Chrome</strong>, <strong>Microsoft Edge</strong> eller appen <strong>WebBLE (iOS)</strong> över en säker HTTPS-anslutning. Du kan använda knappen <strong class="text-purple-300">Simulering</strong> för att testa appen ändå.</p>
-            </div>
-        </div>
-
-        <!-- Left Column: Big Distance Meter & Key Metrics (5 Cols) -->
-        <section class="md:col-span-5 flex flex-col gap-4">
-            
-            <!-- Realtime Distance Display Card -->
-            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 text-center shadow-xl relative overflow-hidden flex flex-col justify-between">
-                <div class="absolute -right-6 -bottom-6 w-32 h-32 bg-blue-500/10 rounded-full blur-2xl pointer-events-none"></div>
-                
-                <div class="flex justify-between items-center text-xs text-slate-400 font-semibold uppercase tracking-wider mb-2">
-                    <span>Avstånd</span>
-                    <span id="sim-indicator" class="hidden text-[10px] text-purple-400 font-mono bg-purple-500/10 px-2 py-0.5 rounded border border-purple-500/20">SIMULERAS</span>
-                </div>
-
-                <div class="my-4">
-                    <div class="flex items-baseline justify-center">
-                        <span id="dist-main" class="text-6xl font-extrabold tracking-tighter text-white font-mono">-.---</span>
-                        <span class="text-xl font-bold text-slate-500 ml-2">m</span>
-                    </div>
-                    <div id="dist-cm" class="text-sm font-mono text-slate-400 mt-1">--- cm</div>
-                </div>
-
-                <!-- Signal / Distance Meter Bar -->
-                <div class="space-y-1">
-                    <div class="flex justify-between text-[10px] text-slate-400 font-mono">
-                        <span>Indikator (0.15m - 2.50m)</span>
-                        <span id="range-pct">0%</span>
-                    </div>
-                    <div class="w-full bg-slate-950 h-2 rounded-full overflow-hidden border border-slate-800">
-                        <div id="range-bar" class="bg-blue-500 h-full w-0 transition-all duration-150"></div>
-                    </div>
-                </div>
-
-                <!-- Live Stats Bar -->
-                <div class="mt-5 grid grid-cols-2 gap-2 text-xs font-mono bg-slate-950 p-2.5 rounded-xl border border-slate-800/80">
-                    <div class="flex flex-col text-left">
-                        <span class="text-slate-500 text-[9px] uppercase">Samplingsfrekvens</span>
-                        <span id="hz-indicator" class="text-blue-400 font-bold">0.0 Hz</span>
-                    </div>
-                    <div class="flex flex-col text-right">
-                        <span class="text-slate-500 text-[9px] uppercase">Mottagna Paket</span>
-                        <span id="packet-counter" class="text-emerald-400 font-bold">0</span>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Session Statistics Card -->
-            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl space-y-3">
-                <p class="text-[10px] uppercase tracking-widest text-slate-400 font-semibold flex items-center justify-between">
-                    <span><i class="fa-solid fa-calculator mr-1"></i> Statistik</span>
-                    <button onclick="clearStats()" class="text-[10px] text-slate-500 hover:text-slate-300">Nollställ</button>
-                </p>
-                <div class="grid grid-cols-3 gap-2 text-center font-mono">
-                    <div class="bg-slate-950 p-2 rounded-lg border border-slate-800/60">
-                        <span class="block text-[9px] text-slate-500 uppercase">Min</span>
-                        <span id="stat-min" class="text-xs font-bold text-emerald-400">-.---</span>
-                    </div>
-                    <div class="bg-slate-950 p-2 rounded-lg border border-slate-800/60">
-                        <span class="block text-[9px] text-slate-500 uppercase">Medel</span>
-                        <span id="stat-avg" class="text-xs font-bold text-blue-400">-.---</span>
-                    </div>
-                    <div class="bg-slate-950 p-2 rounded-lg border border-slate-800/60">
-                        <span class="block text-[9px] text-slate-500 uppercase">Max</span>
-                        <span id="stat-max" class="text-xs font-bold text-rose-400">-.---</span>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Manual Bluetooth Command Buttons -->
-            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl">
-                <p class="text-[10px] uppercase tracking-widest text-slate-400 font-semibold mb-2"><i class="fa-solid fa-code mr-1"></i> Manuella Hex-Kommandon</p>
-                <div class="grid grid-cols-3 gap-1.5 text-xs font-mono">
-                    <button onclick="sendHexCommand([0x27])" class="py-1.5 bg-slate-950 hover:bg-slate-800 rounded text-sky-400 border border-slate-800">0x27 Init</button>
-                    <button onclick="sendHexCommand([0x18])" class="py-1.5 bg-slate-950 hover:bg-slate-800 rounded text-sky-400 border border-slate-800">0x18 Status</button>
-                    <button onclick="sendHexCommand([0x04, 0x00])" class="py-1.5 bg-slate-950 hover:bg-slate-800 rounded text-sky-400 border border-slate-800">0x0400 Conf</button>
-                    <button onclick="sendHexCommand([0x25, 0x1f, 0x01])" class="py-1.5 bg-slate-950 hover:bg-slate-800 rounded text-amber-400 border border-slate-800">0x251f01 Stream</button>
-                    <button onclick="sendHexCommand([0x01])" class="py-1.5 bg-slate-950 hover:bg-slate-800 rounded text-emerald-400 border border-slate-800">0x01 Start</button>
-                    <button onclick="sendHexCommand([0x25, 0x01])" class="py-1.5 bg-slate-950 hover:bg-slate-800 rounded text-emerald-400 border border-slate-800">0x2501 Alt</button>
-                </div>
-            </div>
-
-        </section>
-
-        <!-- Right Column: Real-Time Plot & Raw Terminal Console (7 Cols) -->
-        <section class="md:col-span-7 flex flex-col gap-4">
-
-            <!-- Chart Card -->
-            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl flex flex-col h-72">
-                <div class="flex justify-between items-center mb-2">
-                    <p class="text-[10px] uppercase tracking-widest text-slate-400 font-semibold flex items-center gap-1">
-                        <i class="fa-solid fa-chart-line text-blue-400"></i> Avstånd över tid (m)
-                    </p>
-                    <button onclick="clearChart()" class="text-[10px] text-slate-500 hover:text-slate-300 px-2 py-0.5 bg-slate-950 rounded border border-slate-800">Rensa Graf</button>
-                </div>
-                <div class="flex-1 w-full relative">
-                    <canvas id="distanceChart"></canvas>
-                </div>
-            </div>
-
-            <!-- Debug Console Log -->
-            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl flex-1 min-h-[220px] flex flex-col">
-                <div class="flex justify-between items-center mb-2">
-                    <p class="text-[10px] uppercase tracking-widest text-slate-400 font-semibold flex items-center gap-1">
-                        <i class="fa-solid fa-terminal text-emerald-400"></i> Kommunikationslogg & Dekodare
-                    </p>
-                    <button onclick="clearLog()" class="text-[10px] text-slate-500 hover:text-slate-300 px-2 py-0.5 bg-slate-950 rounded border border-slate-800">Rensa Logg</button>
-                </div>
-                <div id="console-log" class="flex-1 bg-slate-950 rounded-xl p-3 overflow-y-auto font-mono text-[10px] space-y-1 border border-slate-800 custom-scrollbar max-h-[260px]">
-                    <div class="text-slate-500 italic">Tryck på "1. Anslut AirLink" för att påbörja skanning.</div>
-                </div>
-            </div>
-
-        </section>
-
-    </main>
-
-    <script>
-        // --- All Kända PASCO GATT Service UUID:er ---
-        const PASCO_SERVICE_UUIDS = [
-            '4a5c0000-0000-0000-0000-5c1e741f1c00', // Huvudtjänst AirLink
-            '4a5c0001-0000-0000-0000-5c1e741f1c00', // Sekundär AirLink datatjänst
-            '4a5c0002-0000-0000-0000-5c1e741f1c00',
-            '4a5c0003-0000-0000-0000-5c1e741f1c00'
-        ];
-
-        const CMD_UUID_SUBSTR  = '4a5c0000-0100'; 
-        const DATA_UUID_SUBSTR1 = '4a5c0000-0300';
-        const DATA_UUID_SUBSTR2 = '4a5c0001-0003';
-
-        // State Variables
-        let bleDevice = null;
-        let cmdCharacteristic = null;
-        let dataCharacteristics = [];
-        
-        let isConnected = false;
-        let isSimulating = false;
-        let simInterval = null;
-
-        let packetCount = 0;
-        let lastPacketTime = performance.now();
-
-        // Data arrays & Stats
-        let dataHistory = [];
-        let minDist = Infinity;
-        let maxDist = -Infinity;
-        let sumDist = 0;
-
-        let chart = null;
-
-        window.onload = () => {
-            initChart();
-            checkBrowserCompatibility();
-        };
-
-        function checkBrowserCompatibility() {
-            if (!navigator.bluetooth) {
-                document.getElementById('browser-warning').classList.remove('hidden');
-                log('Varning: Web Bluetooth stöds inte av denna webbläsare/miljö.', 'error');
-            }
-        }
-
-        function initChart() {
-            const ctx = document.getElementById('distanceChart').getContext('2d');
-            chart = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: [],
-                    datasets: [{
-                        label: 'Avstånd (m)',
-                        data: [],
-                        borderColor: '#3b82f6',
-                        backgroundColor: 'rgba(59, 130, 246, 0.08)',
-                        borderWidth: 2,
-                        fill: true,
-                        pointRadius: 1,
-                        tension: 0.15
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    animation: false,
-                    scales: {
-                        x: { display: false },
-                        y: {
-                            min: 0,
-                            max: 2.5,
-                            grid: { color: 'rgba(255, 255, 255, 0.05)' },
-                            ticks: { color: '#64748b', font: { family: 'JetBrains Mono', size: 10 } }
-                        }
-                    },
-                    plugins: { legend: { display: false } }
-                }
-            });
-        }
-
-        async function connectAndSetup() {
-            if (isSimulating) stopSimulation();
-
-            if (isConnected) {
-                disconnectDevice();
-                return;
-            }
-
-            if (!navigator.bluetooth) {
-                log('Kan inte starta Bluetooth: navigator.bluetooth saknas.', 'error');
-                alert('Web Bluetooth stöds inte i din nuvarande webbläsare. Använd Chrome/Edge eller slå på "Simulering".');
-                return;
-            }
-
-            try {
-                log('Initiatierar Bluetooth-sökning efter PASCO AirLink...', 'info');
-                
-                // Bred skanning
-                bleDevice = await navigator.bluetooth.requestDevice({
-                    acceptAllDevices: true,
-                    optionalServices: [
-                        ...PASCO_SERVICE_UUIDS,
-                        '00001800-0000-1000-8000-00805f9b34fb',
-                        '00001801-0000-1000-8000-00805f9b34fb',
-                        '0000180a-0000-1000-8000-00805f9b34fb'
-                    ]
-                });
-
-                bleDevice.addEventListener('gattserverdisconnected', onDisconnect);
-                
-                log(`Ansluter till GATT-server på: ${bleDevice.name || 'PASCO AirLink'}...`, 'info');
-                const server = await bleDevice.gatt.connect();
-                log('✓ GATT-server ansluten! Söker tjänster...', 'success');
-
-                cmdCharacteristic = null;
-                dataCharacteristics = [];
-
-                // Hämta alla primära tjänster dynamiskt
-                let services = [];
-                try {
-                    services = await server.getPrimaryServices();
-                    log(`Hittade ${services.length} primära GATT-tjänster.`, 'info');
-                } catch (e) {
-                    log('Dynamisk söksvårighet, söker enskilda PASCO-UUID:er...', 'amber');
-                    for (let uuid of PASCO_SERVICE_UUIDS) {
-                        try {
-                            const s = await server.getPrimaryService(uuid);
-                            if (s) services.push(s);
-                        } catch (err) {}
-                    }
-                }
-
-                // Inspektera karaktäristiker för varje tjänst
-                for (let service of services) {
-                    try {
-                        const characteristics = await service.getCharacteristics();
-                        for (let char of characteristics) {
-                            const uuidStr = char.uuid.toLowerCase();
-                            const canWrite = char.properties.write || char.properties.writeWithoutResponse;
-                            const canNotify = char.properties.notify || char.properties.indicate;
-
-                            if (uuidStr.includes(CMD_UUID_SUBSTR) && canWrite) {
-                                cmdCharacteristic = char;
-                                log(`✓ Hittade dedikerad Kommandokanal: ${uuidStr.substring(0,18)}...`, 'success');
-                            } else if (canWrite && !cmdCharacteristic) {
-                                cmdCharacteristic = char;
-                                log(`Hittade generisk Skrivkanal: ${uuidStr.substring(0,18)}...`, 'info');
-                            }
-
-                            if ((uuidStr.includes(DATA_UUID_SUBSTR1) || uuidStr.includes(DATA_UUID_SUBSTR2) || canNotify)) {
-                                if (canNotify) {
-                                    dataCharacteristics.push(char);
-                                    log(`✓ Hittade Datakanal: ${uuidStr.substring(0,18)}...`, 'success');
-                                }
-                            }
-                        }
-                    } catch (e) {
-                        log(`Kunde inte inspektera tjänst ${service.uuid.substring(0,8)}: ${e.message}`, 'amber');
-                    }
-                }
-
-                if (!cmdCharacteristic) {
-                    throw new Error('Kunde inte identifiera någon skrivbar kommandokanal på AirLink.');
-                }
-
-                if (dataCharacteristics.length === 0) {
-                    throw new Error('Inga notifieringskanaler för datamottagning hittades.');
-                }
-
-                // Prenumerera på notifieringskanaler
-                log('Aktiverar lyssning på datakanaler...', 'info');
-                let activeCount = 0;
-                for (let char of dataCharacteristics) {
-                    try {
-                        await char.startNotifications();
-                        char.addEventListener('characteristicvaluechanged', handleIncomingData);
-                        activeCount++;
-                        log(`✓ Lyssna aktiverat på: ${char.uuid.substring(0,13)}...`, 'success');
-                    } catch (e) {
-                        log(`Kunde inte aktivera notifikation på ${char.uuid.substring(0,8)}: ${e.message}`, 'error');
-                    }
-                }
-
-                if (activeCount === 0) {
-                    throw new Error('Kunde inte starta notifiering på någon av datakanalerna.');
-                }
-
-                isConnected = true;
-                updateUIState(true);
-                log('🎉 Handskakning klar! Tryck på "2. Starta Mätning".', 'success');
-
-            } catch (error) {
-                log(`Anslutningsfel: ${error.message}`, 'error');
-                updateUIState(false);
-                if (bleDevice && bleDevice.gatt.connected) {
-                    bleDevice.gatt.disconnect();
-                }
-            }
-        }
-
-        async function startMeasurement() {
-            if (!cmdCharacteristic && !isSimulating) {
-                log('Ingen aktiv kommandokanal.', 'error');
-                return;
-            }
-            
-            try {
-                log('🚀 Skickar PASCO startsekvens...', 'info');
-                await sendAllStartSequences();
-            } catch (error) {
-                log(`Start misslyckades: ${error.message}`, 'error');
-            }
-        }
-
-        async function sendAllStartSequences() {
-            if (isSimulating) {
-                log('Simulerad mätning påbörjad.', 'success');
-                return;
-            }
-
-            log('-> 1/5 Skickar 0x27 (Init)', 'cmd');
-            await sendHexCommand([0x27]);
-            await sleep(80);
-
-            log('-> 2/5 Skickar 0x18 (Status)', 'cmd');
-            await sendHexCommand([0x18]);
-            await sleep(100);
-
-            log('-> 3/5 Skickar 0x0400 (Konfigurera)', 'cmd');
-            await sendHexCommand([0x04, 0x00]);
-            await sleep(80);
-
-            log('-> 4/5 Skickar 0x251f01 (Stream Ultraljud)', 'cmd');
-            await sendHexCommand([0x25, 0x1f, 0x01]);
-            await sleep(80);
-
-            log('-> 5/5 Skickar 0x01 (Start Kommando)', 'cmd');
-            await sendHexCommand([0x01]);
-
-            log('✅ Startsekvenser skickade! Om sensorn är aktiv börjar mätdata komma nu.', 'success');
-        }
-
-        async function sendHexCommand(bytesArray) {
-            if (isSimulating) {
-                log(`[Sim] Skickade kommando: 0x${Array.from(bytesArray).map(b=>b.toString(16).padStart(2,'0')).join('')}`, 'cmd');
-                return;
-            }
-
-            if (!cmdCharacteristic) {
-                log('Ingen skrivkanal tillgänglig!', 'error');
-                return;
-            }
-
-            try {
-                const data = new Uint8Array(bytesArray);
-                if (cmdCharacteristic.properties.writeWithoutResponse) {
-                    await cmdCharacteristic.writeValueWithoutResponse(data);
-                } else {
-                    await cmdCharacteristic.writeValue(data);
-                }
-            } catch (e) {
-                log(`Skrivfel (0x${bytesArray[0].toString(16)}): ${e.message}`, 'error');
-            }
-        }
-
-        function handleIncomingData(event) {
-            const dataView = event.target.value;
-            const bytes = new Uint8Array(dataView.buffer);
-            processPacketData(dataView, bytes);
-        }
-
-        function processPacketData(dataView, bytes) {
-            packetCount++;
-            document.getElementById('packet-counter').innerText = packetCount;
-
-            // Beräkna Hz
-            const now = performance.now();
-            const delta = now - lastPacketTime;
-            lastPacketTime = now;
-            if (delta > 0 && packetCount % 3 === 0) {
-                const hz = (1000 / delta).toFixed(1);
-                document.getElementById('hz-indicator').innerText = `${hz} Hz`;
-            }
-
-            let hexStr = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
-            
-            if (packetCount <= 5 || packetCount % 20 === 0) {
-                log(`RX [${bytes.length}b]: ${hexStr}`, 'data');
-            }
-
-            // Avkoda Avstånd i meter (Float32 Little Endian på olika offsets)
-            let meters = null;
-            if (dataView.byteLength >= 6) {
-                const f2 = dataView.getFloat32(2, true);
-                if (!isNaN(f2) && f2 >= 0.05 && f2 <= 10.0) meters = f2;
-            }
-            if (meters === null && dataView.byteLength >= 7) {
-                const f3 = dataView.getFloat32(3, true);
-                if (!isNaN(f3) && f3 >= 0.05 && f3 <= 10.0) meters = f3;
-            }
-            if (meters === null && dataView.byteLength >= 8) {
-                const f4 = dataView.getFloat32(4, true);
-                if (!isNaN(f4) && f4 >= 0.05 && f4 <= 10.0) meters = f4;
-            }
-
-            // Fallback: Uint16 i millimeter
-            if (meters === null && dataView.byteLength >= 4) {
-                const u16 = dataView.getUint16(2, true);
-                if (u16 >= 50 && u16 <= 5000) {
-                    meters = u16 / 1000.0;
-                }
-            }
-
-            if (meters !== null) {
-                updateDistanceReading(meters);
-            }
-        }
-
-        function updateDistanceReading(meters) {
-            document.getElementById('dist-main').innerText = meters.toFixed(3);
-            document.getElementById('dist-cm').innerText = `${(meters * 100).toFixed(1)} cm`;
-
-            // Update Signal Bar
-            const minR = 0.15;
-            const maxR = 2.50;
-            const pct = Math.min(100, Math.max(0, ((meters - minR) / (maxR - minR)) * 100));
-            document.getElementById('range-bar').style.width = `${pct}%`;
-            document.getElementById('range-pct').innerText = `${Math.round(pct)}%`;
-
-            // Update Stats
-            if (meters < minDist) minDist = meters;
-            if (meters > maxDist) maxDist = meters;
-            sumDist += meters;
-
-            dataHistory.push({ time: new Date().toLocaleTimeString(), val: meters });
-            const avg = sumDist / dataHistory.length;
-
-            document.getElementById('stat-min').innerText = `${minDist.toFixed(3)} m`;
-            document.getElementById('stat-max').innerText = `${maxDist.toFixed(3)} m`;
-            document.getElementById('stat-avg').innerText = `${avg.toFixed(3)} m`;
-
-            // Update Chart
-            if (chart) {
-                chart.data.labels.push('');
-                chart.data.datasets[0].data.push(meters);
-                if (chart.data.labels.length > 60) {
-                    chart.data.labels.shift();
-                    chart.data.datasets[0].data.shift();
-                }
-                chart.update();
-            }
-        }
-
-        function toggleSimulation() {
-            if (isSimulating) {
-                stopSimulation();
-            } else {
-                startSimulation();
-            }
-        }
-
-        function startSimulation() {
-            if (isConnected) disconnectDevice();
-
-            isSimulating = true;
-            document.getElementById('sim-btn-text').innerText = 'Simulering On';
-            document.getElementById('sim-btn').className = 'px-3 py-1.5 rounded-full text-xs font-bold bg-purple-600 text-white border border-purple-500 shadow-lg shadow-purple-600/30 transition flex items-center gap-1.5';
-            document.getElementById('sim-indicator').classList.remove('hidden');
-
-            updateUIState(true);
-            log('⚡ Simuleringsläge aktiverat. Genererar testdata...', 'success');
-
-            let baseDist = 0.85;
-            let step = 0;
-
-            simInterval = setInterval(() => {
-                step += 0.1;
-                let noise = (Math.random() - 0.5) * 0.03;
-                let simulatedVal = baseDist + Math.sin(step) * 0.4 + noise;
-                simulatedVal = Math.max(0.15, Math.min(2.4, simulatedVal));
-
-                const buffer = new ArrayBuffer(8);
-                const view = new DataView(buffer);
-                view.setUint8(0, 0x00);
-                view.setUint8(1, 0x1f);
-                view.setFloat32(2, simulatedVal, true);
-
-                processPacketData(view, new Uint8Array(buffer));
-            }, 100);
-        }
-
-        function stopSimulation() {
-            if (simInterval) clearInterval(simInterval);
-            simInterval = null;
-            isSimulating = false;
-
-            document.getElementById('sim-btn-text').innerText = 'Simulering Off';
-            document.getElementById('sim-btn').className = 'px-3 py-1.5 rounded-full text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition flex items-center gap-1.5';
-            document.getElementById('sim-indicator').classList.add('hidden');
-
-            updateUIState(false);
-            log('Simulering avslutad.', 'info');
-        }
-
-        function disconnectDevice() {
-            if (bleDevice && bleDevice.gatt.connected) {
-                bleDevice.gatt.disconnect();
-            }
-            onDisconnect();
-        }
-
-        function onDisconnect() {
-            log('Bluetooth-enheten frånkopplad.', 'amber');
-            isConnected = false;
-            updateUIState(false);
-            bleDevice = null;
-        }
-
-        function updateUIState(connected) {
-            const btnConnectLabel = document.getElementById('btn-connect-label');
-            const btnConnect = document.getElementById('btn-connect');
-            const btnStart = document.getElementById('btn-start');
-            const btnForce = document.getElementById('btn-force');
-            const btnExport = document.getElementById('btn-export');
-            const badge = document.getElementById('status-badge');
-            const statusText = document.getElementById('status-text');
-
-            if (connected) {
-                btnConnectLabel.innerText = 'Koppla Från';
-                btnConnect.className = 'py-2.5 px-3 rounded-xl bg-rose-700 hover:bg-rose-600 text-white font-bold text-xs sm:text-sm border border-rose-600 transition flex justify-center items-center gap-2 cursor-pointer';
-
-                btnStart.disabled = false;
-                btnStart.className = 'py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs sm:text-sm shadow-lg shadow-emerald-600/20 transition flex justify-center items-center gap-2 cursor-pointer';
-
-                btnForce.disabled = false;
-                btnForce.className = 'py-2.5 px-3 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs sm:text-sm shadow-lg shadow-amber-600/20 transition flex justify-center items-center gap-2 cursor-pointer';
-
-                btnExport.disabled = false;
-                btnExport.className = 'py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs sm:text-sm border border-slate-700 transition flex justify-center items-center gap-2 cursor-pointer';
-
-                statusText.innerText = isSimulating ? 'Simulerar' : 'Ansluten';
-                badge.className = isSimulating 
-                    ? 'px-3 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider bg-purple-500/10 text-purple-400 border border-purple-500/20 flex items-center gap-2'
-                    : 'px-3 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-2';
-            } else {
-                btnConnectLabel.innerText = '1. Anslut AirLink';
-                btnConnect.className = 'py-2.5 px-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs sm:text-sm shadow-lg shadow-blue-600/20 transition flex justify-center items-center gap-2 cursor-pointer';
-
-                btnStart.disabled = true;
-                btnStart.className = 'py-2.5 px-3 rounded-xl bg-slate-800 text-slate-500 font-bold text-xs sm:text-sm border border-slate-700 transition flex justify-center items-center gap-2 cursor-not-allowed';
-
-                btnForce.disabled = true;
-                btnForce.className = 'py-2.5 px-3 rounded-xl bg-slate-800 text-slate-500 font-bold text-xs sm:text-sm border border-slate-700 transition flex justify-center items-center gap-2 cursor-not-allowed';
-
-                btnExport.disabled = true;
-                btnExport.className = 'py-2.5 px-3 rounded-xl bg-slate-800 text-slate-500 font-bold text-xs sm:text-sm border border-slate-700 transition flex justify-center items-center gap-2 cursor-not-allowed';
-
-                statusText.innerText = 'Väntar';
-                badge.className = 'px-3 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center gap-2';
-                
-                document.getElementById('dist-main').innerText = '-.---';
-                document.getElementById('dist-cm').innerText = '--- cm';
-            }
-        }
-
-        function clearStats() {
-            minDist = Infinity;
-            maxDist = -Infinity;
-            sumDist = 0;
-            dataHistory = [];
-            document.getElementById('stat-min').innerText = '-.---';
-            document.getElementById('stat-max').innerText = '-.---';
-            document.getElementById('stat-avg').innerText = '-.---';
-            log('Statistik nollställd.', 'info');
-        }
-
-        function clearChart() {
-            if (chart) {
-                chart.data.labels = [];
-                chart.data.datasets[0].data = [];
-                chart.update();
-            }
-            log('Graf rensad.', 'info');
-        }
-
-        function exportCSV() {
-            if (dataHistory.length === 0) {
-                log('Ingen data att exportera.', 'amber');
-                return;
-            }
-
-            let csv = 'Tidsstampel,Avstand_Meter\n';
-            dataHistory.forEach(item => {
-                csv += `"${item.time}",${item.val}\n`;
-            });
-
-            const blob = new Blob([csv], { type: 'text/csv' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `pasco_avstand_${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.csv`;
-            a.click();
-            URL.revokeObjectURL(url);
-            log('CSV-fil exporterad.', 'success');
-        }
-
-        function log(msg, type = 'info') {
-            const logEl = document.getElementById('console-log');
-            if (!logEl) return;
-            const div = document.createElement('div');
-            const time = new Date().toLocaleTimeString('sv-SE', {hour12:false, fractionalSecondDigits: 1}).split(',')[0];
-            
-            let color = 'text-slate-300';
-            if (type === 'error') color = 'text-rose-400 font-bold';
-            if (type === 'success') color = 'text-emerald-400 font-bold';
-            if (type === 'data') color = 'text-sky-300 font-mono text-[10px]';
-            if (type === 'cmd') color = 'text-amber-300';
-            if (type === 'amber') color = 'text-amber-400';
-
-            div.className = color;
-            div.innerHTML = `<span class="text-slate-600 mr-1 shadow-sm">[${time}]</span> ${msg}`;
-            logEl.appendChild(div);
-            logEl.scrollTop = logEl.scrollHeight;
-        }
-
-        function sleep(ms) {
-            return new Promise(resolve => setTimeout(resolve, ms));
-        }
-    </script>
+<body>
+
+<h1>PASCO AirLink (PS-3200) + PASPort Motion Sensor – testverktyg</h1>
+
+<div id="status">Inte ansluten.</div>
+
+<button id="connectBtn">Anslut till AirLink</button>
+<button id="disconnectBtn" disabled>Koppla från</button>
+
+<div class="card">
+  <div id="reading">– <span>rått värde</span></div>
+  <div id="calcReading" style="color:#94a3b8;">Kalibrerat värde: –</div>
+</div>
+
+<div class="card">
+  <strong>Kalibrering</strong> (valfritt – behövs för att räkna om till meter)
+  <div class="row">
+    <div style="flex:1">
+      <label>Rått värde vid känt avstånd A</label>
+      <input id="rawA" type="number" placeholder="t.ex. 730">
+      <label>Känt avstånd A (m)</label>
+      <input id="distA" type="number" placeholder="t.ex. 0.20">
+    </div>
+    <div style="flex:1">
+      <label>Rått värde vid känt avstånd B</label>
+      <input id="rawB" type="number" placeholder="t.ex. 2576">
+      <label>Känt avstånd B (m)</label>
+      <input id="distB" type="number" placeholder="t.ex. 0.90">
+    </div>
+  </div>
+  <button id="calibrateBtn" style="background:#3b82f6; color:#0b1220; margin-top:0.5rem;">Använd kalibrering</button>
+</div>
+
+<h3>Rå logg (senaste notiserna)</h3>
+<div id="log"></div>
+
+<script>
+// ---- UUID:er extraherade ur riktig bluetooth-logg (btsnoop) ----
+const SERVICE_1        = '4a5c0000-0000-0000-0000-5c1e741f1c00';
+const CMD1_CHAR        = '4a5c0000-0002-0000-0000-5c1e741f1c00'; // handle 0x0020, write utan svar
+const STATUS1_CHAR     = '4a5c0000-0003-0000-0000-5c1e741f1c00'; // handle 0x0022, notify
+
+const SERVICE_2        = '4a5c0001-0000-0000-0000-5c1e741f1c00';
+const CMD2_CHAR        = '4a5c0001-0002-0000-0000-5c1e741f1c00'; // handle 0x0026, write utan svar
+const STATUS2_CHAR     = '4a5c0001-0003-0000-0000-5c1e741f1c00'; // handle 0x0028, notify
+const MEASURE_CHAR     = '4a5c0001-0004-0000-0000-5c1e741f1c00'; // handle 0x002b, notify (mätström)
+const CMD3_CHAR        = '4a5c0001-0005-0000-0000-5c1e741f1c00'; // handle 0x002e, write utan svar (keep-alive)
+
+let device, server, cmd1, status1, cmd2, status2, measure, cmd3;
+let keepAliveTimer = null;
+let calib = null; // {scale, offset} om användaren kalibrerat
+
+const logEl = document.getElementById('log');
+const statusEl = document.getElementById('status');
+const readingEl = document.getElementById('reading');
+const calcEl = document.getElementById('calcReading');
+
+function log(msg) {
+  const t = new Date().toLocaleTimeString();
+  logEl.textContent += `[${t}] ${msg}\n`;
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function toHex(dataView) {
+  let s = '';
+  for (let i = 0; i < dataView.byteLength; i++) {
+    s += dataView.getUint8(i).toString(16).padStart(2, '0');
+  }
+  return s;
+}
+
+async function writeBytes(characteristic, bytes) {
+  await characteristic.writeValueWithoutResponse(new Uint8Array(bytes));
+  await new Promise(r => setTimeout(r, 60)); // liten paus mellan kommandon
+}
+
+document.getElementById('connectBtn').addEventListener('click', connect);
+document.getElementById('disconnectBtn').addEventListener('click', disconnect);
+document.getElementById('calibrateBtn').addEventListener('click', () => {
+  const rawA = parseFloat(document.getElementById('rawA').value);
+  const distA = parseFloat(document.getElementById('distA').value);
+  const rawB = parseFloat(document.getElementById('rawB').value);
+  const distB = parseFloat(document.getElementById('distB').value);
+  if ([rawA, distA, rawB, distB].some(isNaN) || rawA === rawB) {
+    alert('Fyll i alla fyra fält med giltiga, olika råa värden.');
+    return;
+  }
+  const scale = (distB - distA) / (rawB - rawA);
+  const offset = distA - scale * rawA;
+  calib = { scale, offset };
+  log(`Kalibrering satt: avstånd = raw * ${scale.toFixed(6)} + ${offset.toFixed(4)}`);
+});
+
+async function connect() {
+  try {
+    statusEl.textContent = 'Söker enhet...';
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ namePrefix: '' }], // se kommentar nedan om du vill filtrera på namn
+      optionalServices: [SERVICE_1, SERVICE_2, 'device_information']
+    });
+
+    device.addEventListener('gattserverdisconnected', onDisconnected);
+
+    statusEl.textContent = `Ansluter till ${device.name || device.id}...`;
+    server = await device.gatt.connect();
+
+    const svc1 = await server.getPrimaryService(SERVICE_1);
+    cmd1    = await svc1.getCharacteristic(CMD1_CHAR);
+    status1 = await svc1.getCharacteristic(STATUS1_CHAR);
+
+    const svc2 = await server.getPrimaryService(SERVICE_2);
+    cmd2    = await svc2.getCharacteristic(CMD2_CHAR);
+    status2 = await svc2.getCharacteristic(STATUS2_CHAR);
+    measure = await svc2.getCharacteristic(MEASURE_CHAR);
+    cmd3    = await svc2.getCharacteristic(CMD3_CHAR);
+
+    // Aktivera notiser
+    await status1.startNotifications();
+    status1.addEventListener('characteristicvaluechanged', e => {
+      log(`0x0022 <- ${toHex(e.target.value)}`);
+    });
+
+    await status2.startNotifications();
+    status2.addEventListener('characteristicvaluechanged', e => {
+      log(`0x0028 <- ${toHex(e.target.value)}`);
+    });
+
+    await measure.startNotifications();
+    measure.addEventListener('characteristicvaluechanged', onMeasurement);
+
+    statusEl.textContent = `Ansluten till ${device.name || device.id}. Kör init-sekvens...`;
+    log('Notiser aktiverade. Kör handskakning...');
+
+    // ---- Init/handskakningssekvens, exakt som observerat i btsnoop-loggen ----
+    await writeBytes(cmd1, [0x27]);
+    await writeBytes(cmd1, [0x18]);
+    await writeBytes(cmd1, [0x04, 0x00]);
+    await writeBytes(cmd1, [0x25, 0x1f, 0x01]);
+    await writeBytes(cmd1, [0x22]);
+    await writeBytes(cmd1, [0x15]);
+    await writeBytes(cmd1, [0x04, 0x01]);
+    await writeBytes(cmd1, [0x25, 0x1f, 0x01]);
+    await writeBytes(cmd1, [0x22]);
+    await writeBytes(cmd1, [0x0e, 0x83, 0x0c, 0x00, 0x00, 0x00, 0x80, 0x00]);
+    await writeBytes(cmd1, [0x25, 0x14, 0x01]);
+    await writeBytes(cmd2, [0x08]);
+
+    // ---- Det här är "starta mätning"-kommandot ----
+    await writeBytes(cmd1, [0x30, 0xc8, 0x18, 0x79, 0x00, 0x00, 0x00, 0x00, 0x00]);
+
+    log('Startkommando skickat – väntar på mätdata på 0x002b...');
+    statusEl.textContent = `Mäter från ${device.name || device.id}`;
+
+    document.getElementById('connectBtn').disabled = true;
+    document.getElementById('disconnectBtn').disabled = false;
+
+    // Periodisk keep-alive-cykel (som observerades i loggen, ca var 400:e ms)
+    let cycle = [0x07, 0x0f, 0x17, 0x1f];
+    let cycleIdx = 0;
+    keepAliveTimer = setInterval(async () => {
+      try {
+        await cmd2.writeValueWithoutResponse(new Uint8Array([0x02, 0x02, 0x00]));
+        await cmd2.writeValueWithoutResponse(new Uint8Array([0x01, 0x50, 0xc3, 0x00, 0x00, 0x02, 0x00]));
+        await cmd2.writeValueWithoutResponse(new Uint8Array([0x3a, 0x01, 0x00]));
+        await cmd1.writeValueWithoutResponse(new Uint8Array([0x06, 0xfe, 0xff]));
+        await cmd1.writeValueWithoutResponse(new Uint8Array([0x00]));
+        await cmd3.writeValueWithoutResponse(new Uint8Array([0x00, 0x00, 0x00, 0x00, cycle[cycleIdx]]));
+        cycleIdx = (cycleIdx + 1) % cycle.length;
+      } catch (err) {
+        // enheten kan ha kopplat från - ignorera enstaka fel här
+      }
+    }, 400);
+
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = 'Fel: ' + err.message;
+    log('FEL: ' + err.message);
+  }
+}
+
+function onMeasurement(event) {
+  const dv = event.target.value;
+  const hex = toHex(dv);
+  log(`0x002b <- ${hex}`);
+  if (dv.byteLength >= 3) {
+    const raw = dv.getUint16(1, true); // little-endian, byte 1-2 (byte 0 är en löpande räknare)
+    readingEl.innerHTML = `${raw} <span>rått värde</span>`;
+    if (calib) {
+      const dist = raw * calib.scale + calib.offset;
+      calcEl.textContent = `Kalibrerat värde: ${dist.toFixed(3)} m`;
+    }
+  }
+}
+
+function onDisconnected() {
+  statusEl.textContent = 'Frånkopplad.';
+  document.getElementById('connectBtn').disabled = false;
+  document.getElementById('disconnectBtn').disabled = true;
+  if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null; }
+}
+
+function disconnect() {
+  if (device && device.gatt.connected) {
+    device.gatt.disconnect();
+  }
+}
+</script>
+
+<p style="color:#64748b; font-size:0.8rem; margin-top:2rem;">
+  OBS: Detta är ett första testutkast baserat på en verklig bluetooth-inspelning av din AirLink (015-435) + PS-2103A.
+  Web Bluetooth kräver Chrome på Android (fungerar inte i Safari/iOS) och att sidan laddas via HTTPS
+  (GitHub Pages ger detta automatiskt). Kalibreringsformeln (raw → meter) är okänd tills du kalibrerar
+  mot två kända avstånd ovan.
+</p>
+
 </body>
 </html>
