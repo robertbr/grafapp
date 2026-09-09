@@ -160,26 +160,52 @@
   }
   #statusBanner.visible { opacity: 1; }
 
-  /* Bottom Display Bar */
+  /* Bottom Display Bar & Collapsible Drawer */
+  .bottom-bar-wrapper {
+    position: relative;
+    flex-shrink: 0;
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    background: #2563eb;
+    border-top: 2px solid #1d4ed8;
+    z-index: 30;
+  }
+  .bottom-bar-wrapper.collapsed {
+    transform: translateY(calc(100% - 20px));
+  }
+  .bb-handle {
+    height: 20px;
+    background: #1e40af;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    user-select: none;
+  }
+  .bb-handle:hover {
+    background: #1d4ed8;
+  }
+  .handle-pill {
+    width: 44px;
+    height: 5px;
+    background: rgba(255, 255, 255, 0.7);
+    border-radius: 3px;
+  }
   .bottom-bar { 
-    height: 46px; 
-    background: #2563eb; 
+    height: 80px; 
     display: flex; 
     align-items: stretch; 
-    border-top: 2px solid #1d4ed8; 
-    flex-shrink: 0; 
   }
   .bb-box { 
     flex: 1; 
     display: flex; 
     flex-direction: column; 
     justify-content: center; 
-    padding: 0 12px; 
+    padding: 0 16px; 
     color: #fff; 
     font-weight: bold; 
   }
-  .bb-title { font-size: 0.75rem; opacity: 0.9; text-transform: uppercase; letter-spacing: 0.5px; }
-  .bb-val { font-size: 1.1rem; text-align: right; font-family: monospace; }
+  .bb-title { font-size: 0.85rem; opacity: 0.9; text-transform: uppercase; letter-spacing: 0.5px; }
+  .bb-val { font-size: 3.3rem; text-align: right; font-family: monospace; line-height: 1; }
   .bb-center { 
     flex: 1.5; 
     background: #fff; 
@@ -189,15 +215,16 @@
     justify-content: center; 
     font-style: italic; 
     font-weight: 900; 
-    font-size: 1.3rem; 
+    font-size: 1.4rem; 
     letter-spacing: 1px; 
+    cursor: pointer;
+    user-select: none;
   }
 </style>
 </head>
 <body>
 
 <div class="toolbar">
-  <!-- Left Side: Connect Button, Mode Dropdown, Level Dropdown, Reset Button, Record Button -->
   <div class="tb-left">
     <!-- Connect Sensor Button (Far Left) -->
     <button id="connectBtn" class="sensor-btn" title="Anslut sensor">
@@ -230,7 +257,7 @@
       </svg>
     </button>
 
-    <!-- Record Button (Red/Gray circle) placed directly to the right of the reset button -->
+    <!-- Record Button placed directly to the right of the reset button -->
     <div id="recBtn" class="rec-btn" title="Starta / Stoppa Mätning">
       <div class="rec-btn-inner"></div>
     </div>
@@ -246,18 +273,23 @@
   <div id="countdownOverlay">3</div>
 </div>
 
-<!-- Bottom Status Display -->
-<div class="bottom-bar">
-  <div class="bb-box">
-    <div class="bb-title" id="valLabel">STRÄCKA</div>
-    <div class="bb-val" id="valDisplay">-,-- m</div>
+<!-- Bottom Status Display Wrapper (Collapsible) -->
+<div class="bottom-bar-wrapper" id="bottomBarWrapper">
+  <div class="bb-handle" id="bbHandle" title="Dölj / Visa mätbalken">
+    <div class="handle-pill"></div>
   </div>
-  <div class="bb-center">
-    GÅ ENLIGT GRAFEN
-  </div>
-  <div class="bb-box">
-    <div class="bb-title">POÄNG</div>
-    <div class="bb-val" id="scoreDisplay">-,--</div>
+  <div class="bottom-bar" id="bottomBar">
+    <div class="bb-box">
+      <div class="bb-title" id="valLabel">STRÄCKA</div>
+      <div class="bb-val" id="valDisplay">-,-- m</div>
+    </div>
+    <div class="bb-center" id="bbCenter" title="Klicka för att dölja/visa balken">
+      GÅ ENLIGT GRAFEN
+    </div>
+    <div class="bb-box">
+      <div class="bb-title">POÄNG</div>
+      <div class="bb-val" id="scoreDisplay">-,--</div>
+    </div>
   </div>
 </div>
 
@@ -287,13 +319,13 @@ let currentLevel = 1;
 let isMeasuring = false;
 let startTime = 0;
 let latestDistance = 0;
-let latestVelocity = 0;
+let latestVelocityDisplay = 0; // 1.0s rolling average for text readout
+let latestVelocityGraph = 0;   // 0.25s fast window for responsive graph line
 let userPoints = []; // Array of { t: seconds, v: distance/velocity }
 let animationFrameId = null;
 
-// Realtime Velocity Calculation State
-let lastDist = null;
-let lastTimeMs = null;
+// History buffer for smooth rolling velocity calculation
+let posHistory = []; // Array of { t: timeMs, d: distanceMeters }
 
 // DOM Elements
 const levelSelect = document.getElementById('levelSelect');
@@ -308,6 +340,20 @@ const valLabel = document.getElementById('valLabel');
 const valDisplay = document.getElementById('valDisplay');
 const scoreDisplay = document.getElementById('scoreDisplay');
 const statusBanner = document.getElementById('statusBanner');
+const bottomBarWrapper = document.getElementById('bottomBarWrapper');
+const bbHandle = document.getElementById('bbHandle');
+const bbCenter = document.getElementById('bbCenter');
+
+// Toggle Collapsible Bottom Bar
+function toggleBottomBar() {
+  bottomBarWrapper.classList.toggle('collapsed');
+  setTimeout(() => {
+    resizeCanvas();
+  }, 320);
+}
+
+bbHandle.addEventListener('click', toggleBottomBar);
+bbCenter.addEventListener('click', toggleBottomBar);
 
 function showStatus(msg, duration = 3000) {
   statusBanner.textContent = msg;
@@ -571,13 +617,12 @@ window.addEventListener('resize', resizeCanvas);
 modeSelect.addEventListener('change', (e) => {
   currentMode = e.target.value;
   valLabel.textContent = currentMode === 'POSITION' ? 'STRÄCKA' : 'HASTIGHET';
-  const valToShow = currentMode === 'POSITION' ? latestDistance : latestVelocity;
+  const valToShow = currentMode === 'POSITION' ? latestDistance : latestVelocityDisplay;
   valDisplay.textContent = currentMode === 'POSITION' 
     ? `${formatNumber(valToShow, 2)} m` 
     : `${formatNumber(valToShow, 2)} m/s`;
   userPoints = [];
-  lastDist = null;
-  lastTimeMs = null;
+  posHistory = [];
   scoreDisplay.textContent = '-,--';
 });
 
@@ -604,8 +649,7 @@ resetBtn.addEventListener('click', () => {
 function startRecording() {
   isMeasuring = true;
   userPoints = [];
-  lastDist = null;
-  lastTimeMs = null;
+  posHistory = [];
   startTime = performance.now();
   recBtn.classList.add('recording');
   scoreDisplay.textContent = '-,--';
@@ -716,35 +760,49 @@ function onMeasurement(event) {
     latestDistance = currentDist;
 
     const nowMs = performance.now();
+    posHistory.push({ t: nowMs, d: currentDist });
 
-    // Calculate instantaneous smoothed velocity
-    if (lastDist !== null && lastTimeMs !== null) {
-      const dt = (nowMs - lastTimeMs) / 1000.0;
-      if (dt > 0.02) { // Minimum 20ms delta
-        const instVel = (currentDist - lastDist) / dt;
-        // Low-pass filter (0.3 weight for new value to smooth noise)
-        latestVelocity = latestVelocity * 0.7 + instVel * 0.3;
-        lastDist = currentDist;
-        lastTimeMs = nowMs;
+    // Prune history older than 1.5s
+    posHistory = posHistory.filter(p => (nowMs - p.t) <= 1500);
+
+    // 1) Calculate 1.0s rolling average velocity for Text Display (Steady & Readable)
+    const dispPoints = posHistory.filter(p => (nowMs - p.t) <= 1000);
+    if (dispPoints.length >= 2) {
+      const pOld = dispPoints[0];
+      const pNew = dispPoints[dispPoints.length - 1];
+      const dtDisp = (pNew.t - pOld.t) / 1000.0;
+      if (dtDisp > 0.1) {
+        latestVelocityDisplay = (pNew.d - pOld.d) / dtDisp;
       }
     } else {
-      lastDist = currentDist;
-      lastTimeMs = nowMs;
-      latestVelocity = 0;
+      latestVelocityDisplay = 0;
+    }
+
+    // 2) Calculate 0.25s rolling average velocity for Graph Line (Smooth without lag)
+    const graphPoints = posHistory.filter(p => (nowMs - p.t) <= 250);
+    if (graphPoints.length >= 2) {
+      const pOld = graphPoints[0];
+      const pNew = graphPoints[graphPoints.length - 1];
+      const dtGraph = (pNew.t - pOld.t) / 1000.0;
+      if (dtGraph > 0.04) {
+        latestVelocityGraph = (pNew.d - pOld.d) / dtGraph;
+      }
+    } else {
+      latestVelocityGraph = 0;
     }
 
     // Live display updates
     if (currentMode === 'POSITION') {
       valDisplay.textContent = `${formatNumber(latestDistance, 2)} m`;
     } else {
-      valDisplay.textContent = `${formatNumber(latestVelocity, 2)} m/s`;
+      valDisplay.textContent = `${formatNumber(latestVelocityDisplay, 2)} m/s`;
     }
 
     // Record data points when measurement is active
     if (isMeasuring) {
       const now = (nowMs - startTime) / 1000.0 - PRE_START_TIME;
       if (now >= -PRE_START_TIME && now <= 10.0) {
-        const valToRecord = currentMode === 'POSITION' ? latestDistance : latestVelocity;
+        const valToRecord = currentMode === 'POSITION' ? latestDistance : latestVelocityGraph;
         userPoints.push({ t: now, v: valToRecord });
         if (now >= 0) {
           updateScore();
