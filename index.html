@@ -245,11 +245,24 @@
 <div class="toolbar">
   <div class="tb-left">
     <!-- Connect Sensor Button (Far Left) -->
-    <button id="connectBtn" class="sensor-btn" title="Anslut sensor">
+    <button id="connectBtn" class="sensor-btn" title="Anslut sensor (Bluetooth)">
       <svg class="sensor-icon" viewBox="0 0 24 24">
         <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z"/>
       </svg>
       <span class="warning-badge" id="warnBadge">⚠️</span>
+    </button>
+
+    <!-- USB Connect Button (placed to the right of the Bluetooth button) -->
+    <button id="usbConnectBtn" class="sensor-btn" title="Anslut sensor (USB)">
+      <svg class="sensor-icon" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 3v7"/>
+        <path d="M9.5 5.5L12 3l2.5 2.5"/>
+        <path d="M12 10c-3 0-5 2-5 4.2V16"/>
+        <path d="M12 10c3 0 5 2 5 4.2V16"/>
+        <circle cx="7" cy="18" r="2"/>
+        <circle cx="17" cy="18" r="2"/>
+      </svg>
+      <span class="warning-badge" id="usbWarnBadge">⚠️</span>
     </button>
 
     <!-- Mode Selection Dropdown -->
@@ -330,8 +343,30 @@ const CMD3_CHAR        = '4a5c0001-0005-0000-0000-5c1e741f1c00';
 const RAW_SCALE = 1.0 / 5500.0;
 const PRE_START_TIME = 3.0; // 3 seconds countdown before 0.0s
 
+// ---- USB (WebUSB) support for the same PASCO AirLink bridge ----
+// Reverse-engineered from a USBPcap capture (Vendor ID 0x0945, Product ID 0x0002).
+// The AirLink's USB bulk interface (interface 0, vendor-specific class 0xFF) has:
+//   Bulk OUT endpoint 0x03 (max 64 bytes)
+//   Bulk IN  endpoint 0x82 (max 64 bytes)
+// Every write/notification from the BLE GATT protocol above is simply wrapped with a
+// 2-byte prefix that says which "characteristic" the bytes belong to:
+//   [0x00, 0x02] + payload  -> CMD1_CHAR write
+//   [0x01, 0x02] + payload  -> CMD2_CHAR write
+//   [0x01, 0x05] + payload  -> CMD3_CHAR write
+//   [0x00, 0x03] + payload  -> ack / STATUS1 & STATUS2 notifications (ignored here)
+//   [0x01, 0x04] + payload  -> MEASURE_CHAR notification (payload = same 3 bytes as BLE)
+// So the exact same command bytes used above for Bluetooth work unchanged over USB -
+// only the transport wrapper differs.
+const USB_VENDOR_ID  = 0x0945;
+const USB_PRODUCT_ID = 0x0002;
+const USB_EP_OUT = 3;
+const USB_EP_IN  = 2;
+
 let device = null, server = null;
 let cmd1 = null, status1 = null, cmd2 = null, status2 = null, measure = null, cmd3 = null;
+let usbDevice = null;
+let usbReadLoopActive = false;
+let activeTransport = null; // 'ble' | 'usb' | null
 let keepAliveTimer = null;
 let sensorStreaming = false;
 let autoStopTimer = null;
@@ -357,6 +392,7 @@ const recBtn = document.getElementById('recBtn');
 const resetBtn = document.getElementById('resetBtn');
 const modeSelect = document.getElementById('modeSelect');
 const connectBtn = document.getElementById('connectBtn');
+const usbConnectBtn = document.getElementById('usbConnectBtn');
 const canvas = document.getElementById('graphCanvas');
 const ctx = canvas.getContext('2d');
 const countdownOverlay = document.getElementById('countdownOverlay');
@@ -697,23 +733,23 @@ function stopRecording() {
 }
 
 async function startSensorStream() {
-  if (sensorStreaming || !cmd1 || !cmd2 || !cmd3) return;
+  if (sensorStreaming || !activeTransport) return;
   sensorStreaming = true;
 
   // Start Measurement Stream Command
-  await writeBytes(cmd1, [0x30, 0xc8, 0x18, 0x79, 0x00, 0x00, 0x00, 0x00, 0x00]);
+  await writeBytes(sendCmd1, [0x30, 0xc8, 0x18, 0x79, 0x00, 0x00, 0x00, 0x00, 0x00]);
 
   // Keep-Alive Cycle (400ms)
   let cycle = [0x07, 0x0f, 0x17, 0x1f];
   let cycleIdx = 0;
   keepAliveTimer = setInterval(async () => {
     try {
-      await cmd2.writeValueWithoutResponse(new Uint8Array([0x02, 0x02, 0x00]));
-      await cmd2.writeValueWithoutResponse(new Uint8Array([0x01, 0x50, 0xc3, 0x00, 0x00, 0x02, 0x00]));
-      await cmd2.writeValueWithoutResponse(new Uint8Array([0x3a, 0x01, 0x00]));
-      await cmd1.writeValueWithoutResponse(new Uint8Array([0x06, 0xfe, 0xff]));
-      await cmd1.writeValueWithoutResponse(new Uint8Array([0x00]));
-      await cmd3.writeValueWithoutResponse(new Uint8Array([0x00, 0x00, 0x00, 0x00, cycle[cycleIdx]]));
+      await sendCmd2([0x02, 0x02, 0x00]);
+      await sendCmd2([0x01, 0x50, 0xc3, 0x00, 0x00, 0x02, 0x00]);
+      await sendCmd2([0x3a, 0x01, 0x00]);
+      await sendCmd1([0x06, 0xfe, 0xff]);
+      await sendCmd1([0x00]);
+      await sendCmd3([0x00, 0x00, 0x00, 0x00, cycle[cycleIdx]]);
       cycleIdx = (cycleIdx + 1) % cycle.length;
     } catch (err) {
       // Suppress single drop errors
@@ -721,15 +757,87 @@ async function startSensorStream() {
   }, 400);
 }
 
-async function writeBytes(characteristic, bytes) {
-  await characteristic.writeValueWithoutResponse(new Uint8Array(bytes));
+// ---- Transport-agnostic command senders ----
+// Same three "characteristics" as before (cmd1/cmd2/cmd3), routed to whichever
+// transport (Bluetooth GATT or USB bulk) is currently active.
+async function sendCmd1(bytes) {
+  if (activeTransport === 'ble') return cmd1.writeValueWithoutResponse(new Uint8Array(bytes));
+  if (activeTransport === 'usb') return usbWrite(0x00, 0x02, bytes);
+}
+async function sendCmd2(bytes) {
+  if (activeTransport === 'ble') return cmd2.writeValueWithoutResponse(new Uint8Array(bytes));
+  if (activeTransport === 'usb') return usbWrite(0x01, 0x02, bytes);
+}
+async function sendCmd3(bytes) {
+  if (activeTransport === 'ble') return cmd3.writeValueWithoutResponse(new Uint8Array(bytes));
+  if (activeTransport === 'usb') return usbWrite(0x01, 0x05, bytes);
+}
+
+async function writeBytes(sendFn, bytes) {
+  await sendFn(bytes);
   await new Promise(r => setTimeout(r, 60));
+}
+
+// ---- USB low-level helpers ----
+async function usbWrite(prefixByte0, prefixByte1, bytes) {
+  const buf = new Uint8Array(2 + bytes.length);
+  buf[0] = prefixByte0;
+  buf[1] = prefixByte1;
+  buf.set(bytes, 2);
+  await usbDevice.transferOut(USB_EP_OUT, buf);
+}
+
+async function usbReadLoop() {
+  while (usbReadLoopActive && usbDevice) {
+    try {
+      const result = await usbDevice.transferIn(USB_EP_IN, 64);
+      if (result.status === 'stall') {
+        await usbDevice.clearHalt('in', USB_EP_IN);
+        continue;
+      }
+      const dv = result.data;
+      if (dv && dv.byteLength >= 2) {
+        const p0 = dv.getUint8(0);
+        const p1 = dv.getUint8(1);
+        if (p0 === 0x01 && p1 === 0x04 && dv.byteLength >= 5) {
+          // Same 3-byte payload format as the BLE MEASURE_CHAR notification
+          const measureView = new DataView(dv.buffer, dv.byteOffset + 2, 3);
+          onMeasurement({ target: { value: measureView } });
+        }
+        // [0x00, 0x03,...] = ack/status - nothing to do with it here
+      }
+    } catch (err) {
+      if (!usbReadLoopActive) break;
+      await new Promise(r => setTimeout(r, 30));
+    }
+  }
+}
+
+async function runHandshake() {
+  // Initial Handshake Sequence (identical for Bluetooth and USB)
+  await writeBytes(sendCmd1, [0x27]);
+  await writeBytes(sendCmd1, [0x18]);
+  await writeBytes(sendCmd1, [0x04, 0x00]);
+  await writeBytes(sendCmd1, [0x25, 0x1f, 0x01]);
+  await writeBytes(sendCmd1, [0x22]);
+  await writeBytes(sendCmd1, [0x15]);
+  await writeBytes(sendCmd1, [0x04, 0x01]);
+  await writeBytes(sendCmd1, [0x25, 0x1f, 0x01]);
+  await writeBytes(sendCmd1, [0x22]);
+  await writeBytes(sendCmd1, [0x0e, 0x83, 0x0c, 0x00, 0x00, 0x00, 0x80, 0x00]);
+  await writeBytes(sendCmd1, [0x25, 0x14, 0x01]);
+  await writeBytes(sendCmd2, [0x08]);
 }
 
 connectBtn.addEventListener('click', async () => {
   if (device && device.gatt.connected) {
     userInitiatedDisconnect = true;
     device.gatt.disconnect();
+    return;
+  }
+
+  if (usbDevice) {
+    showStatus("Koppla från USB-sensorn först.");
     return;
   }
 
@@ -775,19 +883,8 @@ async function setupGattConnection() {
   await measure.startNotifications();
   measure.addEventListener('characteristicvaluechanged', onMeasurement);
 
-  // Initial Handshake Sequence
-  await writeBytes(cmd1, [0x27]);
-  await writeBytes(cmd1, [0x18]);
-  await writeBytes(cmd1, [0x04, 0x00]);
-  await writeBytes(cmd1, [0x25, 0x1f, 0x01]);
-  await writeBytes(cmd1, [0x22]);
-  await writeBytes(cmd1, [0x15]);
-  await writeBytes(cmd1, [0x04, 0x01]);
-  await writeBytes(cmd1, [0x25, 0x1f, 0x01]);
-  await writeBytes(cmd1, [0x22]);
-  await writeBytes(cmd1, [0x0e, 0x83, 0x0c, 0x00, 0x00, 0x00, 0x80, 0x00]);
-  await writeBytes(cmd1, [0x25, 0x14, 0x01]);
-  await writeBytes(cmd2, [0x08]);
+  activeTransport = 'ble';
+  await runHandshake();
 
   connectBtn.classList.add('connected');
   if (reconnectStatus) {
@@ -798,6 +895,7 @@ async function setupGattConnection() {
 }
 
 async function onGattDisconnected() {
+  activeTransport = null;
   connectBtn.classList.remove('connected');
   if (reconnectStatus) {
     reconnectStatus.classList.remove('active');
@@ -841,6 +939,81 @@ async function onGattDisconnected() {
       }
     }, 4000);
   }
+}
+
+usbConnectBtn.addEventListener('click', async () => {
+  if (usbDevice) {
+    await disconnectUsb("USB-sensorn frånkopplad");
+    return;
+  }
+
+  if (device && device.gatt && device.gatt.connected) {
+    showStatus("Koppla från Bluetooth-sensorn först.");
+    return;
+  }
+
+  if (!navigator.usb) {
+    showStatus("WebUSB stöds inte i denna webbläsare eller ram.");
+    return;
+  }
+
+  try {
+    usbDevice = await navigator.usb.requestDevice({
+      filters: [{ vendorId: USB_VENDOR_ID, productId: USB_PRODUCT_ID }]
+    });
+    await setupUsbConnection();
+  } catch (err) {
+    usbDevice = null;
+    if (err.name !== 'NotFoundError') {
+      console.error("USB connection error:", err);
+      showStatus("USB-anslutning misslyckades");
+    }
+  }
+});
+
+async function setupUsbConnection() {
+  await usbDevice.open();
+  if (usbDevice.configuration === null) {
+    await usbDevice.selectConfiguration(1);
+  }
+  await usbDevice.claimInterface(0);
+
+  usbReadLoopActive = true;
+  usbReadLoop(); // fire and forget - runs until usbReadLoopActive is false
+
+  activeTransport = 'usb';
+  await runHandshake();
+
+  usbConnectBtn.classList.add('connected');
+  showStatus("USB-sensor ansluten!");
+}
+
+async function disconnectUsb(message) {
+  usbReadLoopActive = false;
+  if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null; }
+  sensorStreaming = false;
+  activeTransport = null;
+  usbConnectBtn.classList.remove('connected');
+
+  const devToClose = usbDevice;
+  usbDevice = null;
+  try {
+    if (devToClose && devToClose.opened) {
+      await devToClose.close();
+    }
+  } catch (err) {
+    // ignore - device may already be gone
+  }
+  if (message) showStatus(message);
+}
+
+// Handle physical unplug of the USB sensor
+if (navigator.usb) {
+  navigator.usb.addEventListener('disconnect', (event) => {
+    if (usbDevice && event.device === usbDevice) {
+      disconnectUsb("USB-sensorn kopplades ur");
+    }
+  });
 }
 
 function onMeasurement(event) {
