@@ -313,6 +313,7 @@ let device = null, server = null;
 let cmd1 = null, status1 = null, cmd2 = null, status2 = null, measure = null, cmd3 = null;
 let keepAliveTimer = null;
 let sensorStreaming = false;
+let autoStopTimer = null;
 
 // Application State
 let currentMode = 'POSITION'; // 'POSITION' (Sträcka) or 'VELOCITY' (Hastighet)
@@ -651,6 +652,12 @@ function startRecording() {
   recBtn.classList.add('recording');
   scoreDisplay.textContent = '-,--';
   startSensorStream();
+
+  // Garanterad avstängning 10 sekunder efter tiden 0, oavsett ritloopen
+  if (autoStopTimer) { clearTimeout(autoStopTimer); }
+  autoStopTimer = setTimeout(() => {
+    stopRecording();
+  }, (PRE_START_TIME + 10) * 1000);
 }
 
 function stopRecording() {
@@ -658,6 +665,12 @@ function stopRecording() {
   recBtn.classList.remove('recording');
   countdownOverlay.style.display = 'none';
   updateScore();
+
+  if (autoStopTimer) { clearTimeout(autoStopTimer); autoStopTimer = null; }
+
+  // Stäng verkligen av sensorn (inte bara grafritningen) - en ny start börjar om helt från grunden
+  if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null; }
+  sensorStreaming = false;
 }
 
 async function startSensorStream() {
