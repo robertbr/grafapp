@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>grafapp</title>
+<title>grafapp - Bluetooth & USB</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
   body { 
@@ -94,7 +94,7 @@
     display: flex;
   }
 
-  /* Connect Sensor Button */
+  /* Connect Sensor Buttons (Bluetooth & USB) */
   .sensor-btn { 
     background: #005291; 
     border: 1px solid #3385c6; 
@@ -106,8 +106,11 @@
     gap: 4px; 
     height: 36px; 
     position: relative; 
+    color: #fff;
+    font-size: 0.75rem;
+    font-weight: bold;
   }
-  .sensor-icon { width: 22px; height: 22px; fill: #fff; }
+  .sensor-icon { width: 20px; height: 20px; fill: #fff; }
   .warning-badge { 
     position: absolute; 
     top: 2px; 
@@ -244,12 +247,22 @@
 
 <div class="toolbar">
   <div class="tb-left">
-    <!-- Connect Sensor Button (Far Left) -->
-    <button id="connectBtn" class="sensor-btn" title="Anslut sensor">
+    <!-- Connect Bluetooth Sensor Button -->
+    <button id="connectBtn" class="sensor-btn" title="Anslut Bluetooth-sensor">
       <svg class="sensor-icon" viewBox="0 0 24 24">
-        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z"/>
+        <path d="M17.71 7.71L12 2h-1v7.59L6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 11 14.41V22h1l5.71-5.71-4.3-4.29 4.3-4.29zM13 5.83l1.88 1.88L13 9.59V5.83zm1.88 10.46L13 18.17v-3.76l1.88 1.88z"/>
       </svg>
+      <span>BLE</span>
       <span class="warning-badge" id="warnBadge">⚠️</span>
+    </button>
+
+    <!-- Connect USB Sensor Button (Right next to Bluetooth) -->
+    <button id="usbConnectBtn" class="sensor-btn" title="Anslut USB-sensor (PASCO)">
+      <svg class="sensor-icon" viewBox="0 0 24 24">
+        <path d="M15 7v2h1v4h-2V9h-2V7h3zm-6 0v2H7v4h2V9h2V7H9zm6 10h-2v-2h2v2zm-6 0H7v-2h2v2zm3-14C6.48 3 2 7.48 2 13s4.48 10 10 10 10-4.48 10-10S17.52 3 12 3zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/>
+      </svg>
+      <span>USB</span>
+      <span class="warning-badge" id="usbWarnBadge">⚠️</span>
     </button>
 
     <!-- Mode Selection Dropdown -->
@@ -326,16 +339,28 @@ const STATUS2_CHAR     = '4a5c0001-0003-0000-0000-5c1e741f1c00';
 const MEASURE_CHAR     = '4a5c0001-0004-0000-0000-5c1e741f1c00';
 const CMD3_CHAR        = '4a5c0001-0005-0000-0000-5c1e741f1c00';
 
+// ---- PASCO WebUSB Identifiers ----
+const PASCO_VENDOR_ID  = 0x0945;
+const PASCO_PRODUCT_ID = 0x0002;
+
 // Calibration: 5500 raw = 1.0 m, 0 raw = 0.0 m
 const RAW_SCALE = 1.0 / 5500.0;
 const PRE_START_TIME = 3.0; // 3 seconds countdown before 0.0s
 
+// Bluetooth State
 let device = null, server = null;
 let cmd1 = null, status1 = null, cmd2 = null, status2 = null, measure = null, cmd3 = null;
 let keepAliveTimer = null;
 let sensorStreaming = false;
 let autoStopTimer = null;
 let userInitiatedDisconnect = false;
+
+// WebUSB State
+let usbDevice = null;
+let usbConnected = false;
+let usbKeepAliveTimer = null;
+let usbEndpointIn = 2; // Default Bulk IN endpoint (0x82)
+let usbEndpointOut = 2; // Default Bulk OUT endpoint (0x02)
 
 // Application State
 let currentMode = 'POSITION'; // 'POSITION' (Sträcka) or 'VELOCITY' (Hastighet)
@@ -357,6 +382,7 @@ const recBtn = document.getElementById('recBtn');
 const resetBtn = document.getElementById('resetBtn');
 const modeSelect = document.getElementById('modeSelect');
 const connectBtn = document.getElementById('connectBtn');
+const usbConnectBtn = document.getElementById('usbConnectBtn');
 const canvas = document.getElementById('graphCanvas');
 const ctx = canvas.getContext('2d');
 const countdownOverlay = document.getElementById('countdownOverlay');
@@ -449,7 +475,6 @@ function updateScore() {
     return;
   }
 
-  // Filter valid points only from t = 0 to current elapsed time
   const validPoints = userPoints.filter(p => p.t >= 0);
   if (validPoints.length < 2) {
     scoreDisplay.textContent = '-,--';
@@ -463,10 +488,7 @@ function updateScore() {
     const p = validPoints[i];
     const target = getTargetValue(currentLevel, currentMode, p.t);
     
-    // Calculate absolute deviation
     let diff = Math.abs(p.v - target);
-    
-    // Cap maximum deviation to 2.0 to eliminate giant sensor spikes
     if (diff > 2.0) {
       diff = 2.0;
     }
@@ -475,11 +497,7 @@ function updateScore() {
   }
 
   const meanError = totalCappedError / len;
-
-  // Maximum allowed tolerance scale (0.8m for position, 0.5m/s for velocity)
   const maxTolerance = currentMode === 'POSITION' ? 0.8 : 0.5;
-  
-  // Calculate percentage score (100% for 0 error, decaying linearly to 0%)
   const score = Math.max(0, Math.min(100, (1 - (meanError / maxTolerance)) * 100));
   
   scoreDisplay.textContent = formatNumber(score, 2);
@@ -490,7 +508,6 @@ function drawGraph() {
   const height = canvas.height;
   ctx.clearRect(0, 0, width, height);
 
-  // Margins adjusted for large axis fonts
   const marginLeft = 130;
   const marginRight = 30;
   const marginTop = 30;
@@ -499,11 +516,9 @@ function drawGraph() {
   const graphW = width - marginLeft - marginRight;
   const graphH = height - marginTop - marginBottom;
 
-  // X-Range (-3.5s to 10s) - lite extra utrymme på den negativa sidan, men etiketterna nedan visas ändå bara på heltalssekunder
   const minX = -3.5;
   const maxX = 10;
 
-  // Y-Range
   let minY = 0.0, maxY = 2.0;
   if (currentMode === 'VELOCITY') {
     minY = -0.8;
@@ -523,7 +538,6 @@ function drawGraph() {
   ctx.fillStyle = '#1e293b';
   ctx.font = '36px system-ui, sans-serif';
 
-  // Vertical Grid (Time: -3 to 10) - etiketterna börjar alltid på -3 även om axeln (minX) nu går till -3.5
   for (let t = -3; t <= maxX; t++) {
     const x = getCanvasX(t);
     ctx.beginPath();
@@ -535,7 +549,6 @@ function drawGraph() {
     ctx.fillText(t.toString(), x, marginTop + graphH + 42);
   }
 
-  // Horizontal Grid (Values with comma decimal)
   const yTicks = currentMode === 'POSITION' ? [0.0, 0.4, 0.8, 1.2, 1.6, 2.0] : [-0.8, -0.4, 0.0, 0.4, 0.8];
   yTicks.forEach(val => {
     const y = getCanvasY(val);
@@ -548,7 +561,6 @@ function drawGraph() {
     ctx.fillText(formatNumber(val, 1), marginLeft - 12, y + 12);
   });
 
-  // t = 0 Line (Thicker Vertical)
   const xZero = getCanvasX(0);
   ctx.strokeStyle = '#334155';
   ctx.lineWidth = 1.5;
@@ -557,7 +569,6 @@ function drawGraph() {
   ctx.lineTo(xZero, marginTop + graphH);
   ctx.stroke();
 
-  // Axis Labels
   ctx.fillStyle = '#0f172a';
   ctx.font = 'bold 36px system-ui, sans-serif';
   ctx.textAlign = 'center';
@@ -603,7 +614,7 @@ function drawGraph() {
   // Animation Loop for Countdown & Measurement Timer
   if (isMeasuring) {
     const elapsed = (performance.now() - startTime) / 1000.0;
-    const curT = elapsed - PRE_START_TIME; // t goes from -3.0s to 10.0s
+    const curT = elapsed - PRE_START_TIME;
 
     if (curT < 0) {
       countdownOverlay.style.display = 'block';
@@ -634,7 +645,6 @@ function resizeCanvas() {
 }
 window.addEventListener('resize', resizeCanvas);
 
-// Mode Selection Dropdown
 modeSelect.addEventListener('change', (e) => {
   currentMode = e.target.value;
   valLabel.textContent = currentMode === 'POSITION' ? 'STRÄCKA' : 'HASTIGHET';
@@ -647,14 +657,12 @@ modeSelect.addEventListener('change', (e) => {
   scoreDisplay.textContent = '-,--';
 });
 
-// Level Switcher
 levelSelect.addEventListener('change', (e) => {
   currentLevel = parseInt(e.target.value);
   userPoints = [];
   scoreDisplay.textContent = '-,--';
 });
 
-// Recording Triggers
 recBtn.addEventListener('click', () => {
   if (!isMeasuring) {
     startRecording();
@@ -674,9 +682,13 @@ function startRecording() {
   startTime = performance.now();
   recBtn.classList.add('recording');
   scoreDisplay.textContent = '-,--';
-  startSensorStream();
 
-  // Garanterad avstängning 10 sekunder efter tiden 0, oavsett ritloopen
+  if (device && device.gatt.connected) {
+    startBluetoothSensorStream();
+  } else if (usbConnected && usbDevice) {
+    startUsbSensorStream();
+  }
+
   if (autoStopTimer) { clearTimeout(autoStopTimer); }
   autoStopTimer = setTimeout(() => {
     stopRecording();
@@ -691,19 +703,72 @@ function stopRecording() {
 
   if (autoStopTimer) { clearTimeout(autoStopTimer); autoStopTimer = null; }
 
-  // Stäng verkligen av sensorn (inte bara grafritningen) - en ny start börjar om helt från grunden
   if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null; }
+  if (usbKeepAliveTimer) { clearInterval(usbKeepAliveTimer); usbKeepAliveTimer = null; }
   sensorStreaming = false;
 }
 
-async function startSensorStream() {
+// Common processing function for raw measurement data
+function handleRawMeasurement(rawVal) {
+  const currentDist = rawVal * RAW_SCALE; // 5500 raw = 1 m
+  latestDistance = currentDist;
+
+  const nowMs = performance.now();
+  posHistory.push({ t: nowMs, d: currentDist });
+
+  posHistory = posHistory.filter(p => (nowMs - p.t) <= 1500);
+
+  // 1.0s rolling average for display
+  const dispPoints = posHistory.filter(p => (nowMs - p.t) <= 1000);
+  if (dispPoints.length >= 2) {
+    const pOld = dispPoints[0];
+    const pNew = dispPoints[dispPoints.length - 1];
+    const dtDisp = (pNew.t - pOld.t) / 1000.0;
+    if (dtDisp > 0.1) {
+      latestVelocityDisplay = (pNew.d - pOld.d) / dtDisp;
+    }
+  } else {
+    latestVelocityDisplay = 0;
+  }
+
+  // 0.25s rolling average for graph line
+  const graphPoints = posHistory.filter(p => (nowMs - p.t) <= 250);
+  if (graphPoints.length >= 2) {
+    const pOld = graphPoints[0];
+    const pNew = graphPoints[graphPoints.length - 1];
+    const dtGraph = (pNew.t - pOld.t) / 1000.0;
+    if (dtGraph > 0.04) {
+      latestVelocityGraph = (pNew.d - pOld.d) / dtGraph;
+    }
+  } else {
+    latestVelocityGraph = 0;
+  }
+
+  if (currentMode === 'POSITION') {
+    valDisplay.textContent = `${formatNumber(latestDistance, 2)} m`;
+  } else {
+    valDisplay.textContent = `${formatNumber(latestVelocityDisplay, 2)} m/s`;
+  }
+
+  if (isMeasuring) {
+    const now = (nowMs - startTime) / 1000.0 - PRE_START_TIME;
+    if (now >= -PRE_START_TIME && now <= 10.0) {
+      const valToRecord = currentMode === 'POSITION' ? latestDistance : latestVelocityGraph;
+      userPoints.push({ t: now, v: valToRecord });
+      if (now >= 0) {
+        updateScore();
+      }
+    }
+  }
+}
+
+// ---- BLUETOOTH LOGIC ----
+async function startBluetoothSensorStream() {
   if (sensorStreaming || !cmd1 || !cmd2 || !cmd3) return;
   sensorStreaming = true;
 
-  // Start Measurement Stream Command
   await writeBytes(cmd1, [0x30, 0xc8, 0x18, 0x79, 0x00, 0x00, 0x00, 0x00, 0x00]);
 
-  // Keep-Alive Cycle (400ms)
   let cycle = [0x07, 0x0f, 0x17, 0x1f];
   let cycleIdx = 0;
   keepAliveTimer = setInterval(async () => {
@@ -715,9 +780,7 @@ async function startSensorStream() {
       await cmd1.writeValueWithoutResponse(new Uint8Array([0x00]));
       await cmd3.writeValueWithoutResponse(new Uint8Array([0x00, 0x00, 0x00, 0x00, cycle[cycleIdx]]));
       cycleIdx = (cycleIdx + 1) % cycle.length;
-    } catch (err) {
-      // Suppress single drop errors
-    }
+    } catch (err) {}
   }, 400);
 }
 
@@ -734,7 +797,7 @@ connectBtn.addEventListener('click', async () => {
   }
 
   if (!navigator.bluetooth) {
-    showStatus("Web Bluetooth stöds inte i denna webbläsare eller ram.");
+    showStatus("Web Bluetooth stöds inte i denna webbläsare.");
     return;
   }
 
@@ -746,13 +809,18 @@ connectBtn.addEventListener('click', async () => {
 
     userInitiatedDisconnect = false;
     device.addEventListener('gattserverdisconnected', onGattDisconnected);
-
     await setupGattConnection();
 
   } catch (err) {
-    if (err.name !== 'NotFoundError') {
-      console.error("Bluetooth connection error:", err);
-      showStatus("Anslutning misslyckades");
+    if (err.name === 'NotFoundError') {
+      showStatus("Ingen enhet valdes");
+      return;
+    }
+    console.error("Bluetooth connection error:", err);
+    if (err.name === 'SecurityError' || (err.message && err.message.includes('permissions policy'))) {
+      showStatus("Bluetooth blockeras av webbläsarens säkerhetspolicy i iframe. Öppna sidan i egen flik för direktåtkomst.", 6000);
+    } else {
+      showStatus("Bluetooth-anslutning misslyckades: " + (err.message || "Okänt fel"));
     }
   }
 });
@@ -775,7 +843,6 @@ async function setupGattConnection() {
   await measure.startNotifications();
   measure.addEventListener('characteristicvaluechanged', onMeasurement);
 
-  // Initial Handshake Sequence
   await writeBytes(cmd1, [0x27]);
   await writeBytes(cmd1, [0x18]);
   await writeBytes(cmd1, [0x04, 0x00]);
@@ -794,7 +861,7 @@ async function setupGattConnection() {
     reconnectStatus.classList.remove('active');
     reconnectStatus.textContent = '';
   }
-  showStatus("Sensor ansluten!");
+  showStatus("Bluetooth-sensor ansluten!");
 }
 
 async function onGattDisconnected() {
@@ -811,7 +878,6 @@ async function onGattDisconnected() {
     return;
   }
 
-  // Oväntad frånkoppling (t.ex. radiostörning) - försök återansluta automatiskt
   showStatus("Tappade kontakten - försöker återansluta...");
   const delays = [1000, 2000, 4000, 8000, 12000];
 
@@ -828,9 +894,7 @@ async function onGattDisconnected() {
       await setupGattConnection();
       showStatus("Återansluten!");
       return;
-    } catch (err) {
-      // försök igen tills vi når maxantalet försök
-    }
+    } catch (err) {}
   }
   showStatus("Kunde inte återansluta - anslut manuellt igen");
   if (reconnectStatus) {
@@ -846,61 +910,145 @@ async function onGattDisconnected() {
 function onMeasurement(event) {
   const dv = event.target.value;
   if (dv.byteLength >= 3) {
-    const raw = dv.getUint16(1, true); // Little-endian raw reading
-    const currentDist = raw * RAW_SCALE; // 5500 raw = 1 m
-    latestDistance = currentDist;
+    const raw = dv.getUint16(1, true);
+    handleRawMeasurement(raw);
+  }
+}
 
-    const nowMs = performance.now();
-    posHistory.push({ t: nowMs, d: currentDist });
+// ---- WEBUSB LOGIC (PASCO USB Bridge 0x0945 / 0x0002) ----
+usbConnectBtn.addEventListener('click', async () => {
+  if (usbConnected && usbDevice) {
+    await disconnectUsb();
+    return;
+  }
 
-    // Prune history older than 1.5s
-    posHistory = posHistory.filter(p => (nowMs - p.t) <= 1500);
+  if (!navigator.usb) {
+    showStatus("WebUSB stöds inte i denna webbläsare (använd Chrome/Edge).");
+    return;
+  }
 
-    // 1) Calculate 1.0s rolling average velocity for Text Display (Steady & Readable)
-    const dispPoints = posHistory.filter(p => (nowMs - p.t) <= 1000);
-    if (dispPoints.length >= 2) {
-      const pOld = dispPoints[0];
-      const pNew = dispPoints[dispPoints.length - 1];
-      const dtDisp = (pNew.t - pOld.t) / 1000.0;
-      if (dtDisp > 0.1) {
-        latestVelocityDisplay = (pNew.d - pOld.d) / dtDisp;
+  try {
+    usbDevice = await navigator.usb.requestDevice({
+      filters: [
+        { vendorId: PASCO_VENDOR_ID, productId: PASCO_PRODUCT_ID },
+        { vendorId: PASCO_VENDOR_ID }
+      ]
+    });
+
+    await setupUsbConnection();
+
+  } catch (err) {
+    if (err.name === 'NotFoundError') {
+      showStatus("Ingen enhet valdes");
+      return;
+    }
+    console.error("USB Connection error:", err);
+    if (err.name === 'SecurityError' || (err.message && err.message.includes('permissions policy'))) {
+      showStatus("WebUSB blockeras av webbläsarens säkerhetspolicy i iframe. Öppna sidan i egen flik för direktåtkomst.", 6000);
+    } else {
+      showStatus("USB-anslutning misslyckades: " + (err.message || "Okänt fel"));
+    }
+  }
+});
+
+async function setupUsbConnection() {
+  if (!usbDevice) return;
+
+  await usbDevice.open();
+  if (usbDevice.configuration === null) {
+    await usbDevice.selectConfiguration(1);
+  }
+  await usbDevice.claimInterface(0);
+
+  // Identify Endpoints
+  const iface = usbDevice.configuration.interfaces[0];
+  const endpoints = iface.alternate.endpoints;
+  endpoints.forEach(ep => {
+    if (ep.direction === 'in') usbEndpointIn = ep.endpointNumber;
+    if (ep.direction === 'out') usbEndpointOut = ep.endpointNumber;
+  });
+
+  usbConnected = true;
+  usbConnectBtn.classList.add('connected');
+  showStatus("USB-sensor ansluten!");
+
+  // Start USB Polling Loop
+  readUsbLoop();
+
+  // Send Initial Handshake over USB
+  await sendUsbPacket(new Uint8Array([0x27, 0x18, 0x04, 0x00]));
+}
+
+async function startUsbSensorStream() {
+  if (!usbConnected || !usbDevice) return;
+  
+  // Send start measurement packet over USB Endpoint OUT
+  await sendUsbPacket(new Uint8Array([0x30, 0xc8, 0x18, 0x79, 0x00, 0x00, 0x00, 0x00, 0x00]));
+
+  // USB Keep-Alive Cycle
+  usbKeepAliveTimer = setInterval(async () => {
+    if (usbConnected && usbDevice) {
+      try {
+        await sendUsbPacket(new Uint8Array([0x02, 0x02, 0x00]));
+      } catch (e) {}
+    }
+  }, 400);
+}
+
+async function sendUsbPacket(buffer) {
+  if (usbDevice && usbConnected) {
+    try {
+      await usbDevice.transferOut(usbEndpointOut, buffer);
+    } catch (e) {
+      console.warn("USB transferOut error:", e);
+    }
+  }
+}
+
+async function readUsbLoop() {
+  while (usbConnected && usbDevice && usbDevice.opened) {
+    try {
+      const result = await usbDevice.transferIn(usbEndpointIn, 64);
+      if (result.status === 'ok' && result.data && result.data.byteLength >= 2) {
+        parseUsbData(result.data);
       }
-    } else {
-      latestVelocityDisplay = 0;
-    }
-
-    // 2) Calculate 0.25s rolling average velocity for Graph Line (Smooth without lag)
-    const graphPoints = posHistory.filter(p => (nowMs - p.t) <= 250);
-    if (graphPoints.length >= 2) {
-      const pOld = graphPoints[0];
-      const pNew = graphPoints[graphPoints.length - 1];
-      const dtGraph = (pNew.t - pOld.t) / 1000.0;
-      if (dtGraph > 0.04) {
-        latestVelocityGraph = (pNew.d - pOld.d) / dtGraph;
-      }
-    } else {
-      latestVelocityGraph = 0;
-    }
-
-    // Live display updates
-    if (currentMode === 'POSITION') {
-      valDisplay.textContent = `${formatNumber(latestDistance, 2)} m`;
-    } else {
-      valDisplay.textContent = `${formatNumber(latestVelocityDisplay, 2)} m/s`;
-    }
-
-    // Record data points when measurement is active
-    if (isMeasuring) {
-      const now = (nowMs - startTime) / 1000.0 - PRE_START_TIME;
-      if (now >= -PRE_START_TIME && now <= 10.0) {
-        const valToRecord = currentMode === 'POSITION' ? latestDistance : latestVelocityGraph;
-        userPoints.push({ t: now, v: valToRecord });
-        if (now >= 0) {
-          updateScore();
-        }
+    } catch (err) {
+      if (usbConnected) {
+        console.warn("USB Read loop interrupted:", err);
+        break;
       }
     }
   }
+}
+
+function parseUsbData(dataView) {
+  // Search USB payload for valid 16-bit distance reading
+  if (dataView.byteLength >= 3) {
+    // Check if packet contains motion sensor raw data at standard offset
+    for (let offset = 0; offset <= dataView.byteLength - 2; offset++) {
+      const raw = dataView.getUint16(offset, true);
+      // Valid raw distance heuristic: 0 to 15000 (0.0m to ~2.7m)
+      if (raw > 100 && raw < 15000) {
+        handleRawMeasurement(raw);
+        break;
+      }
+    }
+  }
+}
+
+async function disconnectUsb() {
+  usbConnected = false;
+  if (usbKeepAliveTimer) { clearInterval(usbKeepAliveTimer); usbKeepAliveTimer = null; }
+  
+  if (usbDevice) {
+    try {
+      await usbDevice.close();
+    } catch (e) {}
+    usbDevice = null;
+  }
+  
+  usbConnectBtn.classList.remove('connected');
+  showStatus("USB-sensorn frånkopplad");
 }
 
 window.onload = () => {
