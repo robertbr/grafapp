@@ -76,6 +76,24 @@
     box-shadow: 0 0 10px #ef4444; 
   }
 
+  /* Reconnect Status Badge */
+  .reconnect-status {
+    font-size: 0.85rem;
+    font-weight: bold;
+    color: #facc15;
+    padding: 4px 8px;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(250, 204, 21, 0.4);
+    display: none;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+  }
+  .reconnect-status.active {
+    display: flex;
+  }
+
   /* Connect Sensor Button */
   .sensor-btn { 
     background: #005291; 
@@ -261,6 +279,9 @@
     <div id="recBtn" class="rec-btn" title="Starta / Stoppa Mätning">
       <div class="rec-btn-inner"></div>
     </div>
+
+    <!-- UI status indicator right next to start button -->
+    <div id="reconnectStatus" class="reconnect-status"></div>
   </div>
 
   <div style="flex:1"></div>
@@ -314,6 +335,7 @@ let cmd1 = null, status1 = null, cmd2 = null, status2 = null, measure = null, cm
 let keepAliveTimer = null;
 let sensorStreaming = false;
 let autoStopTimer = null;
+let userInitiatedDisconnect = false;
 
 // Application State
 let currentMode = 'POSITION'; // 'POSITION' (Sträcka) or 'VELOCITY' (Hastighet)
@@ -342,6 +364,7 @@ const valLabel = document.getElementById('valLabel');
 const valDisplay = document.getElementById('valDisplay');
 const scoreDisplay = document.getElementById('scoreDisplay');
 const statusBanner = document.getElementById('statusBanner');
+const reconnectStatus = document.getElementById('reconnectStatus');
 const bottomBarWrapper = document.getElementById('bottomBarWrapper');
 const bbHandle = document.getElementById('bbHandle');
 const bbCenter = document.getElementById('bbCenter');
@@ -705,6 +728,7 @@ async function writeBytes(characteristic, bytes) {
 
 connectBtn.addEventListener('click', async () => {
   if (device && device.gatt.connected) {
+    userInitiatedDisconnect = true;
     device.gatt.disconnect();
     return;
   }
@@ -720,46 +744,10 @@ connectBtn.addEventListener('click', async () => {
       optionalServices: [SERVICE_1, SERVICE_2, 'device_information']
     });
 
-    device.addEventListener('gattserverdisconnected', () => {
-      connectBtn.classList.remove('connected');
-      showStatus("Sensorn frånkopplad");
-      if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null; }
-      sensorStreaming = false;
-    });
+    userInitiatedDisconnect = false;
+    device.addEventListener('gattserverdisconnected', onGattDisconnected);
 
-    server = await device.gatt.connect();
-
-    const svc1 = await server.getPrimaryService(SERVICE_1);
-    cmd1    = await svc1.getCharacteristic(CMD1_CHAR);
-    status1 = await svc1.getCharacteristic(STATUS1_CHAR);
-
-    const svc2 = await server.getPrimaryService(SERVICE_2);
-    cmd2    = await svc2.getCharacteristic(CMD2_CHAR);
-    status2 = await svc2.getCharacteristic(STATUS2_CHAR);
-    measure = await svc2.getCharacteristic(MEASURE_CHAR);
-    cmd3    = await svc2.getCharacteristic(CMD3_CHAR);
-
-    await status1.startNotifications();
-    await status2.startNotifications();
-    await measure.startNotifications();
-    measure.addEventListener('characteristicvaluechanged', onMeasurement);
-
-    // Initial Handshake Sequence
-    await writeBytes(cmd1, [0x27]);
-    await writeBytes(cmd1, [0x18]);
-    await writeBytes(cmd1, [0x04, 0x00]);
-    await writeBytes(cmd1, [0x25, 0x1f, 0x01]);
-    await writeBytes(cmd1, [0x22]);
-    await writeBytes(cmd1, [0x15]);
-    await writeBytes(cmd1, [0x04, 0x01]);
-    await writeBytes(cmd1, [0x25, 0x1f, 0x01]);
-    await writeBytes(cmd1, [0x22]);
-    await writeBytes(cmd1, [0x0e, 0x83, 0x0c, 0x00, 0x00, 0x00, 0x80, 0x00]);
-    await writeBytes(cmd1, [0x25, 0x14, 0x01]);
-    await writeBytes(cmd2, [0x08]);
-
-    connectBtn.classList.add('connected');
-    showStatus("Sensor ansluten!");
+    await setupGattConnection();
 
   } catch (err) {
     if (err.name !== 'NotFoundError') {
@@ -768,6 +756,92 @@ connectBtn.addEventListener('click', async () => {
     }
   }
 });
+
+async function setupGattConnection() {
+  server = await device.gatt.connect();
+
+  const svc1 = await server.getPrimaryService(SERVICE_1);
+  cmd1    = await svc1.getCharacteristic(CMD1_CHAR);
+  status1 = await svc1.getCharacteristic(STATUS1_CHAR);
+
+  const svc2 = await server.getPrimaryService(SERVICE_2);
+  cmd2    = await svc2.getCharacteristic(CMD2_CHAR);
+  status2 = await svc2.getCharacteristic(STATUS2_CHAR);
+  measure = await svc2.getCharacteristic(MEASURE_CHAR);
+  cmd3    = await svc2.getCharacteristic(CMD3_CHAR);
+
+  await status1.startNotifications();
+  await status2.startNotifications();
+  await measure.startNotifications();
+  measure.addEventListener('characteristicvaluechanged', onMeasurement);
+
+  // Initial Handshake Sequence
+  await writeBytes(cmd1, [0x27]);
+  await writeBytes(cmd1, [0x18]);
+  await writeBytes(cmd1, [0x04, 0x00]);
+  await writeBytes(cmd1, [0x25, 0x1f, 0x01]);
+  await writeBytes(cmd1, [0x22]);
+  await writeBytes(cmd1, [0x15]);
+  await writeBytes(cmd1, [0x04, 0x01]);
+  await writeBytes(cmd1, [0x25, 0x1f, 0x01]);
+  await writeBytes(cmd1, [0x22]);
+  await writeBytes(cmd1, [0x0e, 0x83, 0x0c, 0x00, 0x00, 0x00, 0x80, 0x00]);
+  await writeBytes(cmd1, [0x25, 0x14, 0x01]);
+  await writeBytes(cmd2, [0x08]);
+
+  connectBtn.classList.add('connected');
+  if (reconnectStatus) {
+    reconnectStatus.classList.remove('active');
+    reconnectStatus.textContent = '';
+  }
+  showStatus("Sensor ansluten!");
+}
+
+async function onGattDisconnected() {
+  connectBtn.classList.remove('connected');
+  if (reconnectStatus) {
+    reconnectStatus.classList.remove('active');
+    reconnectStatus.textContent = '';
+  }
+  if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null; }
+  sensorStreaming = false;
+
+  if (userInitiatedDisconnect) {
+    showStatus("Sensorn frånkopplad");
+    return;
+  }
+
+  // Oväntad frånkoppling (t.ex. radiostörning) - försök återansluta automatiskt
+  showStatus("Tappade kontakten - försöker återansluta...");
+  const delays = [1000, 2000, 4000, 8000, 12000];
+
+  if (reconnectStatus) {
+    reconnectStatus.classList.add('active');
+  }
+
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    if (reconnectStatus) {
+      reconnectStatus.textContent = `Återansluter (${attempt}/5)...`;
+    }
+    await new Promise(r => setTimeout(r, delays[attempt - 1]));
+    try {
+      await setupGattConnection();
+      showStatus("Återansluten!");
+      return;
+    } catch (err) {
+      // försök igen tills vi når maxantalet försök
+    }
+  }
+  showStatus("Kunde inte återansluta - anslut manuellt igen");
+  if (reconnectStatus) {
+    reconnectStatus.textContent = "Ej ansluten";
+    setTimeout(() => {
+      if (reconnectStatus && !device?.gatt?.connected) {
+        reconnectStatus.classList.remove('active');
+      }
+    }, 4000);
+  }
+}
 
 function onMeasurement(event) {
   const dv = event.target.value;
