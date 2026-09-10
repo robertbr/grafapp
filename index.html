@@ -966,7 +966,7 @@ usbConnectBtn.addEventListener('click', async () => {
     usbDevice = null;
     if (err.name !== 'NotFoundError') {
       console.error("USB connection error:", err);
-      showStatus("USB-anslutning misslyckades");
+      showStatus("USB-fel: " + err.name + " - " + err.message, 6000);
     }
   }
 });
