@@ -990,6 +990,49 @@ usbConnectBtn.addEventListener('click', async () => {
   }
 });
 
+function hexDv(dv) {
+  if (!dv) return '(inget data)';
+  const b = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
+  return [...b].map(x => x.toString(16).padStart(2, '0')).join(' ');
+}
+
+// Replicates the EP0 control-transfer sequence the Windows software does right before
+// the very first bulk exchange: three vendor "identify" reads, a reset of both bulk
+// pipes, and a vendor 0xFB command with no data phase. Any one of these might be what
+// actually arms the bridge's bulk IN endpoint, so we send them all, but don't treat
+// failures as fatal since some browsers/OSes restrict certain control requests.
+async function usbVendorInit() {
+  try {
+    const r1 = await usbDevice.controlTransferIn(
+      { requestType: 'vendor', recipient: 'device', request: 0xed, value: 0x0000, index: 0x0000 }, 2);
+    if (USB_DEBUG) console.log("Vendor 0xED reply:", r1.status, hexDv(r1.data));
+  } catch (err) { console.warn("Vendor 0xED request failed:", err.name, err.message); }
+
+  try {
+    const r2 = await usbDevice.controlTransferIn(
+      { requestType: 'vendor', recipient: 'device', request: 0xa0, value: 0x01fc, index: 0x1000 }, 4);
+    if (USB_DEBUG) console.log("Vendor 0xA0 reply:", r2.status, hexDv(r2.data));
+  } catch (err) { console.warn("Vendor 0xA0 request failed:", err.name, err.message); }
+
+  try {
+    const r3 = await usbDevice.controlTransferIn(
+      { requestType: 'vendor', recipient: 'device', request: 0xf2, value: 0x0000, index: 0x0000 }, 0x3f);
+    if (USB_DEBUG) console.log("Vendor 0xF2 reply:", r3.status, hexDv(r3.data));
+  } catch (err) { console.warn("Vendor 0xF2 request failed:", err.name, err.message); }
+
+  try {
+    await usbDevice.clearHalt('out', USB_EP_OUT);
+    await usbDevice.clearHalt('in', USB_EP_IN);
+    if (USB_DEBUG) console.log("Bulk pipes reset (clearHalt on both endpoints)");
+  } catch (err) { console.warn("Pipe reset failed:", err.name, err.message); }
+
+  try {
+    await usbDevice.controlTransferOut(
+      { requestType: 'vendor', recipient: 'device', request: 0xfb, value: 0x0000, index: 0x0035 });
+    if (USB_DEBUG) console.log("Vendor 0xFB wake command sent");
+  } catch (err) { console.warn("Vendor 0xFB wake command failed:", err.name, err.message); }
+}
+
 async function setupUsbConnection() {
   if (USB_DEBUG) console.log("USB device selected:", usbDevice.productName, usbDevice.manufacturerName, "VID/PID:", usbDevice.vendorId.toString(16), usbDevice.productId.toString(16));
 
@@ -1003,6 +1046,8 @@ async function setupUsbConnection() {
 
   await usbDevice.claimInterface(0);
   if (USB_DEBUG) console.log("Interface 0 claimed");
+
+  await usbVendorInit();
 
   usbReadLoopActive = true;
   usbReadLoop(); // fire and forget - runs until usbReadLoopActive is false
