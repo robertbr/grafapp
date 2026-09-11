@@ -247,7 +247,7 @@
     <!-- Connect Sensor Button (Far Left) -->
     <button id="connectBtn" class="sensor-btn" title="Anslut sensor (Bluetooth)">
       <svg class="sensor-icon" viewBox="0 0 24 24">
-        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z"/>
+        <path d="M17.71 7.71L12 2h-1v7.59L6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 11 14.41V22h1l5.71-5.71-4.3-4.29 4.3-4.29zM13 5.83l1.88 1.88L13 9.59V5.83zm1.88 10.46L13 18.17v-3.76l1.88 1.88z"/>
       </svg>
       <span class="warning-badge" id="warnBadge">⚠️</span>
     </button>
@@ -732,6 +732,10 @@ function stopRecording() {
   sensorStreaming = false;
 }
 
+// Set to true temporarily to see every USB byte sent/received in the browser console (F12).
+const USB_DEBUG = true;
+let usbTickBusy = false; // guards against overlapping keep-alive ticks
+
 async function startSensorStream() {
   if (sensorStreaming || !activeTransport) return;
   sensorStreaming = true;
@@ -743,6 +747,8 @@ async function startSensorStream() {
   let cycle = [0x07, 0x0f, 0x17, 0x1f];
   let cycleIdx = 0;
   keepAliveTimer = setInterval(async () => {
+    if (usbTickBusy) return; // previous tick's writes haven't finished yet - skip this one
+    usbTickBusy = true;
     try {
       await sendCmd2([0x02, 0x02, 0x00]);
       await sendCmd2([0x01, 0x50, 0xc3, 0x00, 0x00, 0x02, 0x00]);
@@ -752,7 +758,9 @@ async function startSensorStream() {
       await sendCmd3([0x00, 0x00, 0x00, 0x00, cycle[cycleIdx]]);
       cycleIdx = (cycleIdx + 1) % cycle.length;
     } catch (err) {
-      // Suppress single drop errors
+      console.error("Keep-alive write failed:", err.name, err.message);
+    } finally {
+      usbTickBusy = false;
     }
   }, 400);
 }
@@ -784,19 +792,28 @@ async function usbWrite(prefixByte0, prefixByte1, bytes) {
   buf[0] = prefixByte0;
   buf[1] = prefixByte1;
   buf.set(bytes, 2);
-  await usbDevice.transferOut(USB_EP_OUT, buf);
+  if (USB_DEBUG) console.log("USB TX:", [...buf].map(b => b.toString(16).padStart(2, '0')).join(' '));
+  const result = await usbDevice.transferOut(USB_EP_OUT, buf);
+  if (USB_DEBUG) console.log("USB TX status:", result.status, "bytesWritten:", result.bytesWritten);
+  return result;
 }
 
 async function usbReadLoop() {
+  if (USB_DEBUG) console.log("USB read loop started");
   while (usbReadLoopActive && usbDevice) {
     try {
       const result = await usbDevice.transferIn(USB_EP_IN, 64);
       if (result.status === 'stall') {
+        console.warn("USB IN endpoint stalled - clearing halt");
         await usbDevice.clearHalt('in', USB_EP_IN);
         continue;
       }
       const dv = result.data;
       if (dv && dv.byteLength >= 2) {
+        if (USB_DEBUG) {
+          const bytes = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
+          console.log("USB RX:", [...bytes].map(b => b.toString(16).padStart(2, '0')).join(' '));
+        }
         const p0 = dv.getUint8(0);
         const p1 = dv.getUint8(1);
         if (p0 === 0x01 && p1 === 0x04 && dv.byteLength >= 5) {
@@ -808,9 +825,11 @@ async function usbReadLoop() {
       }
     } catch (err) {
       if (!usbReadLoopActive) break;
+      console.error("USB read error:", err.name, err.message);
       await new Promise(r => setTimeout(r, 30));
     }
   }
+  if (USB_DEBUG) console.log("USB read loop stopped");
 }
 
 async function runHandshake() {
@@ -972,17 +991,25 @@ usbConnectBtn.addEventListener('click', async () => {
 });
 
 async function setupUsbConnection() {
+  if (USB_DEBUG) console.log("USB device selected:", usbDevice.productName, usbDevice.manufacturerName, "VID/PID:", usbDevice.vendorId.toString(16), usbDevice.productId.toString(16));
+
   await usbDevice.open();
+  if (USB_DEBUG) console.log("USB device opened. Current configuration:", usbDevice.configuration ? usbDevice.configuration.configurationValue : null);
+
   if (usbDevice.configuration === null) {
     await usbDevice.selectConfiguration(1);
+    if (USB_DEBUG) console.log("Configuration 1 selected");
   }
+
   await usbDevice.claimInterface(0);
+  if (USB_DEBUG) console.log("Interface 0 claimed");
 
   usbReadLoopActive = true;
   usbReadLoop(); // fire and forget - runs until usbReadLoopActive is false
 
   activeTransport = 'usb';
   await runHandshake();
+  if (USB_DEBUG) console.log("Handshake sent");
 
   usbConnectBtn.classList.add('connected');
   showStatus("USB-sensor ansluten!");
