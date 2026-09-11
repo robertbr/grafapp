@@ -384,7 +384,109 @@ let userPoints = []; // Array of { t: seconds, v: distance/velocity }
 let animationFrameId = null;
 
 // History buffer for smooth rolling velocity calculation
-let posHistory = []; // Array of { t: timeMs, d: distanceMeters }
+let posHistory = []; // Array of { t: timeMs, d: distanceMeters } - holds CORRECTED values (see filterSensorSpike)
+
+// ---- Sensor spike/dropout filter ----
+// The sensor occasionally glitches for ~0.1-0.3s (lost contact etc.) and reports a
+// value at/near its min or max range. Such a jump would imply an implausible speed
+// and/or acceleration for a hand-held puck, so we detect that and, instead of using
+// the raw value, extrapolate from the motion just before the glitch.
+//
+// Limits chosen:
+//   MAX_PLAUSIBLE_SPEED = 4 m/s  - as requested, generous headroom above a fast arm swing.
+//   MAX_PLAUSIBLE_ACCEL = 6 m/s^2 - as requested; comfortably covers a brisk push/stop of a
+//     hand-held puck while staying far below the accelerations a glitch produces (a jump
+//     to/near the sensor's min or max within one ~10-20ms sample implies hundreds of m/s^2).
+// Because a glitch always implies acceleration far beyond what a person can produce, the
+// exact value in this range isn't critical - both limits mainly need to separate "clearly
+// human" motion from "clearly a glitch", which 4 m/s / 6 m/s^2 achieves with margin.
+const MAX_PLAUSIBLE_SPEED = 4.0;    // m/s
+const MAX_PLAUSIBLE_ACCEL = 6.0;    // m/s^2
+const ACCEL_TREND_WINDOW  = 0.3;    // s - "medeltalet 0,3s före" som du föreslog, används för att uppskatta accelerationen att extrapolera med
+const MAX_EXTRAPOLATION_TIME = 0.4; // s - säkerhetsspärr: om sensorn är dålig längre än så, sluta gissa och acceptera dess data igen, så att grafen inte kan driva iväg för evigt
+
+let lastGoodT = null;      // ms (performance.now()) för senast accepterade RIKTIGA mätvärdet
+let lastGoodD = null;      // m, avstånd vid senast accepterade riktiga mätvärdet
+let lastGoodV = 0;         // m/s, uppskattad hastighet vid senast accepterade riktiga mätvärdet
+let badStreakStart = null; // ms, när nuvarande sekvens av avvisade/felaktiga mätvärden började
+
+function resetSpikeFilterState() {
+  lastGoodT = null;
+  lastGoodD = null;
+  lastGoodV = 0;
+  badStreakStart = null;
+}
+
+// Uppskattar medelaccelerationen under de ACCEL_TREND_WINDOW sekunderna fram till
+// "uptoMs", baserat på de (redan korrigerade) punkterna i posHistory. Delar fönstret i
+// två halvor och jämför medelhastigheten i respektive halva, så att en enstaka brusig
+// punkt inte får dominera resultatet.
+function estimateRecentAcceleration(uptoMs) {
+  const windowPoints = posHistory.filter(p => (uptoMs - p.t) >= 0 && (uptoMs - p.t) <= ACCEL_TREND_WINDOW * 1000);
+  if (windowPoints.length < 4) return 0; // för lite data för att lita på en trend - anta konstant hastighet
+
+  const tStart = windowPoints[0].t;
+  const tEnd = windowPoints[windowPoints.length - 1].t;
+  const midT = tStart + (tEnd - tStart) / 2;
+  const firstHalf = windowPoints.filter(p => p.t <= midT);
+  const secondHalf = windowPoints.filter(p => p.t > midT);
+  if (firstHalf.length < 2 || secondHalf.length < 2) return 0;
+
+  const v1 = (firstHalf[firstHalf.length - 1].d - firstHalf[0].d) / ((firstHalf[firstHalf.length - 1].t - firstHalf[0].t) / 1000);
+  const v2 = (secondHalf[secondHalf.length - 1].d - secondHalf[0].d) / ((secondHalf[secondHalf.length - 1].t - secondHalf[0].t) / 1000);
+  const dt = (secondHalf[secondHalf.length - 1].t - firstHalf[0].t) / 1000;
+  if (!(dt > 0) || !isFinite(v1) || !isFinite(v2)) return 0;
+
+  return (v2 - v1) / dt;
+}
+
+// Tar emot ett råvärde direkt från sensorn och returnerar ett korrigerat värde: om
+// värdet är fysikaliskt rimligt (givet den senaste hastighets-/accelerationstrenden)
+// returneras det oförändrat; annars returneras ett extrapolerat värde baserat på
+// rörelsen strax före felet, så att en enstaka felaktig mätning inte syns som en pik.
+function filterSensorSpike(rawDist, nowMs) {
+  if (lastGoodT === null) {
+    // Första mätvärdet - inget att jämföra med ännu, acceptera det som startpunkt.
+    lastGoodT = nowMs; lastGoodD = rawDist; lastGoodV = 0;
+    return rawDist;
+  }
+
+  const dt = (nowMs - lastGoodT) / 1000.0;
+  if (dt <= 0) return lastGoodD; // dubblett/omkastad tidsstämpel - ignorera
+
+  const impliedV = (rawDist - lastGoodD) / dt;
+  const impliedA = (impliedV - lastGoodV) / dt;
+
+  const plausible = Math.abs(impliedV) <= MAX_PLAUSIBLE_SPEED && Math.abs(impliedA) <= MAX_PLAUSIBLE_ACCEL;
+  const glitchDuration = badStreakStart === null ? 0 : (nowMs - badStreakStart) / 1000.0;
+
+  if (plausible || glitchDuration > MAX_EXTRAPOLATION_TIME) {
+    // Antingen ett normalt, rimligt mätvärde, eller så har sensorn varit dålig för
+    // länge för att fortsätta gissa (säkerhetsspärr) - acceptera värdet och återgå
+    // till normal spårning.
+    lastGoodV = impliedV;
+    lastGoodD = rawDist;
+    lastGoodT = nowMs;
+    badStreakStart = null;
+    return rawDist;
+  }
+
+  // Orimligt mätvärde - tolka det som ett sensorfel och extrapolera utifrån rörelsen
+  // strax före felet, med accelerationstrenden från ACCEL_TREND_WINDOW sekunder innan
+  // felet började.
+  if (badStreakStart === null) badStreakStart = nowMs;
+
+  const trendAccel = estimateRecentAcceleration(lastGoodT);
+  const usedAccel = Math.max(-MAX_PLAUSIBLE_ACCEL, Math.min(MAX_PLAUSIBLE_ACCEL, trendAccel));
+
+  // Kinematik från senaste kända goda punkten: d = d0 + v0*dt + 0.5*a*dt^2
+  const extrapolatedD = lastGoodD + lastGoodV * dt + 0.5 * usedAccel * dt * dt;
+
+  // OBS: lastGoodD/T/V lämnas medvetet oförändrade här, så att extrapoleringen alltid
+  // utgår från senaste RIKTIGA mätvärdet istället för att bygga vidare på sina egna
+  // gissningar, och så att nästa goda mätvärde återigen jämförs mot riktig data.
+  return extrapolatedD;
+}
 
 // DOM Elements
 const levelSelect = document.getElementById('levelSelect');
@@ -680,6 +782,7 @@ modeSelect.addEventListener('change', (e) => {
     : `${formatNumber(valToShow, 2)} m/s`;
   userPoints = [];
   posHistory = [];
+  resetSpikeFilterState();
   scoreDisplay.textContent = '-,--';
 });
 
@@ -707,6 +810,7 @@ function startRecording() {
   isMeasuring = true;
   userPoints = [];
   posHistory = [];
+  resetSpikeFilterState();
   startTime = performance.now();
   recBtn.classList.add('recording');
   scoreDisplay.textContent = '-,--';
@@ -1092,10 +1196,15 @@ function onMeasurement(event) {
   const dv = event.target.value;
   if (dv.byteLength >= 3) {
     const raw = dv.getUint16(1, true); // Little-endian raw reading
-    const currentDist = raw * RAW_SCALE; // 5500 raw = 1 m
-    latestDistance = currentDist;
+    const rawDist = raw * RAW_SCALE; // 5500 raw = 1 m
 
     const nowMs = performance.now();
+
+    // Korrigera bort orimliga pikar (tappad kontakt etc.) innan värdet används alls -
+    // se filterSensorSpike ovan.
+    const currentDist = filterSensorSpike(rawDist, nowMs);
+    latestDistance = currentDist;
+
     posHistory.push({ t: nowMs, d: currentDist });
 
     // Prune history older than 1.5s
